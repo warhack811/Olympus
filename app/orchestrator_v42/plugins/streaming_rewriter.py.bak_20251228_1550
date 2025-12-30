@@ -1,0 +1,18 @@
+# app/orchestrator_v42/plugins/streaming_rewriter.py
+
+class StreamingRewriter:
+    """
+    Akışkan Yeniden Yazım (Streaming Rewriter) - İskelet.
+    
+    Gelecek fazlarda token bazlı state machine mantığını içerecek.
+    Şimdilik passthrough (etkisiz) modda.
+    """
+    
+    enabled: bool = False
+    
+    def rewrite_chunk(self, chunk: str) -> str:
+        """
+        Gelen metin parçasını (chunk) işler.
+        Şu an sadece olduğu gibi geri döndürür.
+        """
+        return chunk

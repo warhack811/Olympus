@@ -1,0 +1,17 @@
+# app/orchestrator_v42/plugins/output_sanitizer.py
+
+def sanitize(text: str) -> str:
+    """
+    Çıktı Temizleyici (Output Sanitizer).
+    
+    Metin üzerindeki kapanmamış Markdown bloklarını (fence) onarır.
+    İçeriği değiştirmez, sadece format güvenliği sağlar.
+    """
+    # 3'lü tırnakları say
+    fence_count = text.count("```")
+    
+    # Eğer sayı tek ise, sona bir tane kapatıcı ekle
+    if fence_count % 2 != 0:
+        return text + "\n```"
+        
+    return text

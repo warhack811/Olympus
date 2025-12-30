@@ -1,0 +1,38 @@
+# app/orchestrator_v42/plugins/intent_classifier.py
+
+import logging
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger("orchestrator.intent")
+
+async def classify(message: str, username: str | None = None) -> Dict[str, Any]:
+    """
+    STUB: Phase 1.0 Mock Intent Classifier.
+    
+    In the future, this will call an LLM (e.g., Llama-3-8B) to determine:
+    - User intent (tasks)
+    - Complexity
+    - Domain
+    - RAG requirements
+    - Tool hints
+    
+    Current behavior: Returns a static, deterministic 'chat' intent.
+    """
+    logger.debug(f"Classifying message for user {username}: {message[:50]}...")
+    
+    # Static Stub Response mimicking Blueprint Schema
+    return {
+        "tasks": [
+            {
+                "id": "t1",
+                "type": "chat",
+                "depends_on": [],
+                "priority": 1
+            }
+        ],
+        "composer": "sequential",
+        "complexity": "low",
+        "domain": "general",
+        "rag_decision": "off",
+        "tool_hints": []
+    }

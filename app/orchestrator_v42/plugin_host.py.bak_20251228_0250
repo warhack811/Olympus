@@ -1,0 +1,9 @@
+class PluginHost:
+    def __init__(self):
+        self._plugins = {}
+
+    def register(self, name, plugin):
+        self._plugins[name] = plugin
+        
+    def get_plugin(self, name):
+        return self._plugins.get(name)

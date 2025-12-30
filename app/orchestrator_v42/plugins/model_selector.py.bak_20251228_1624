@@ -1,0 +1,103 @@
+# app/orchestrator_v42/plugins/model_selector.py
+
+import logging
+from typing import List, Dict, Any
+
+logger = logging.getLogger("orchestrator.selector")
+
+def select(required_capabilities: List[str], catalog: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Model Seçici (Model Selector).
+    
+    Gereken yeteneklerle katalogdaki modelleri eşleştirir ve en uygun modeli seçer.
+    
+    Kural Seti:
+    - Katalog boşsa güvenli varsayılan döner.
+    - Puanlama: Eşleşen her yetenek +2, Eksik her yetenek -3.
+    - Tier Bonusları: Hızlı +1, Dengeli +2, Derin +3, Uzman +2, Yerel +1, Yaratıcı +2.
+    - Eşitlik Durumu (Tie-break): model_id alfabetik sırasına göre küçük olan seçilir (deterministik).
+    - Seçilen model_id HER ZAMAN dolu döner.
+    """
+    logger.debug(f"Model seçimi yapılıyor. Gereksinimler: {required_capabilities}")
+    
+    # 1. Katalog Boşsa veya Geçersizse Güvenli Fallback
+    if not catalog or not isinstance(catalog, list):
+        logger.warning("Katalog boş veya geçersiz geldi! Varsayılan modele dönülüyor.")
+        return {
+            "selected_model_id": "genel_dengeli_v1",
+            "score": 0,
+            "candidates_considered": 0,
+            "reason": "taslak: katalog boş, varsayılana dönüldü"
+        }
+    
+    best_model = None
+    best_score = -9999
+    
+    # Sabit Tier Bonusları
+    tier_bonus_map = {
+        "hizli": 1,
+        "yerel": 1,
+        "dengeli": 2,
+        "uzman": 2,
+        "yaratici": 2,
+        "derin": 3
+    }
+    
+    # 2. Puanlama Algoritması
+    for model in catalog:
+        if not isinstance(model, dict):
+            continue
+            
+        score = 0
+        model_caps = model.get("capabilities", [])
+        if not isinstance(model_caps, list):
+            model_caps = []
+        
+        # Yetenek Eşleşmesi
+        for req in required_capabilities:
+            if req in model_caps:
+                score += 2 # Eşleşen her yetenek için ödül
+            else:
+                score -= 3 # Eksik yetenek için ceza
+        
+        # Tier Bonusu
+        tier = model.get("tier", "bilinmiyor")
+        score += tier_bonus_map.get(tier, 0)
+            
+        # 3. Kıyaslama ve Tie-break (Eşitlik bozma)
+        is_better = False
+        
+        # İlk aday her zaman en iyi adaydır (başlangıç için)
+        if best_model is None:
+            is_better = True
+        elif score > best_score:
+            is_better = True
+        elif score == best_score:
+            # Eşit puanda alfabetik olarak önde olana (küçük olana) öncelik ver
+            # Bu sayede seçim her zaman deterministik olur (sıralamaya bağlı kalmaz)
+            current_id = model.get("model_id", "")
+            best_id = best_model.get("model_id", "")
+            if current_id < best_id:
+                is_better = True
+        
+        if is_better:
+            best_score = score
+            best_model = model
+            
+    # Eğer döngü bittiğinde hala model yoksa (örneğin katalogda dict olmayan elemanlar varsa)
+    if not best_model:
+        return {
+            "selected_model_id": "genel_dengeli_v1",
+            "score": 0,
+            "candidates_considered": len(catalog),
+            "reason": "taslak: geçerli aday bulunamadı, varsayılana dönüldü"
+        }
+    
+    selected_id = best_model.get("model_id", "genel_dengeli_v1")
+    
+    return {
+        "selected_model_id": selected_id,
+        "score": best_score,
+        "candidates_considered": len(catalog),
+        "reason": "taslak: yetenek puanlamasina gore secildi"
+    }

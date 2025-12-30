@@ -1,0 +1,38 @@
+# app/orchestrator_v42/plugins/specialist_stub.py
+
+from typing import Dict, Any, List
+
+async def produce(message: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """
+    Uzman Üretici (Specialist Generator) - Taslak
+    
+    Kullanıcı isteğine göre, gerçeğe yakın ama sabit (deterministik) bir 'Uzman Çıktısı' üretir.
+    LLM yerine şimdilik bu statik yapı döner.
+    
+    Dönüş Şeması:
+    - solution_text: Ana çözüm metni (teknik/detaylı).
+    - code_blocks: Kod parçaları listesi.
+    - claims: İddialar listesi (fact-checking için).
+    - evidence: Kanıtlar listesi (RAG kaynağı vb.).
+    """
+    
+    # Deterministik bir örnek cevap
+    solution = (
+        f"Alınan mesaj: '{message}'.\n\n"
+        "Uzman Analizi:\n"
+        "Bu sorunun çözümü için Python'da bir 'Merge Sort' algoritması kullanılabilir. "
+        "Algoritma O(n log n) karmaşıklığına sahiptir ve büyük veri setleri için uygundur."
+    )
+    
+    # Örnek Kod Bloğu
+    code_block = {
+        "language": "python",
+        "code": "def merge_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    # ... implementation ..."
+    }
+    
+    return {
+        "solution_text": solution,
+        "code_blocks": [code_block],
+        "claims": ["Merge Sort O(n log n) karmaşıklığındadır.", "Python listeleri mutable'dır."],
+        "evidence": ["Algoritmalara Giriş, Cormen et al.", "Python 3.12 Dokümantasyonu"]
+    }

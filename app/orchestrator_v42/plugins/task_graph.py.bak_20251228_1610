@@ -1,0 +1,66 @@
+# app/orchestrator_v42/plugins/task_graph.py
+
+from typing import List, Dict, Any
+
+def topo_sort(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Görevleri bağımlılıklarına (depends_on) göre topolojik olarak sıralar.
+    Kahn Algoritması kullanılır.
+    
+    Deterministik olması için aynı seviyedeki tasklar ID'lerine göre alfabetik sıralanır.
+    Döngüsel bağımlılık varsa, orijinal listeyi geri döndürür (fail-safe).
+    """
+    if not tasks:
+        return []
+    
+    # 1. Graf Yapısı Oluştur
+    # id -> task objesi
+    task_map = {t["id"]: t for t in tasks}
+    # id -> gelen kenarların sayısı (in-degree)
+    in_degree = {t["id"]: 0 for t in tasks}
+    # id -> giden kenarlar (adj_list) (bu task bitince hangileri açılacak)
+    adj_list = {t["id"]: [] for t in tasks}
+    
+    # Bağımlılıkları işle
+    # t["depends_on"] içindeki her parent -> t
+    for t in tasks:
+        deps = t.get("depends_on", [])
+        for parent_id in deps:
+            if parent_id in adj_list:
+                adj_list[parent_id].append(t["id"])
+                in_degree[t["id"]] += 1
+            else:
+                # Bilinmeyen parent, yoksay veya logla. Şimdilik yoksay.
+                pass
+                
+    # 2. Kuyruğa Başlangıç Düğümlerini Ekle (In-degree 0 olanlar)
+    # Deterministik olması için ID'ye göre sırala
+    queue = sorted([tid for tid, deg in in_degree.items() if deg == 0])
+    
+    sorted_tasks = []
+    
+    while queue:
+        # Kuyruktan alfabetik en küçük ID'yi al
+        u = queue.pop(0) # queue zaten sorted başladı, ama her adımda yeni eklenenleri de sort etmeliyiz?
+        # Kahn algoritmasında queue sırası standartta önemli değil ama determinizm için kontrollü gitmek daha iyi.
+        # Python'da list pop(0) O(N)'dir ama task sayısı çok az (<10) olduğu için sorun yok.
+        
+        sorted_tasks.append(task_map[u])
+        
+        # Komşuların in-degree'sini azalt
+        neighbors = sorted(adj_list[u]) # Komşuları da deterministik sıra ile işle
+        for v in neighbors:
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                queue.append(v)
+        
+        # Queue'yu tekrar sırala (Deterministik garanti için)
+        queue.sort()
+        
+    # 3. Döngü Kontrolü
+    if len(sorted_tasks) != len(tasks):
+        # Döngü var demektir (veya eksik node). Orijinal listeyi dön.
+        # Loglama çağrısı burada yapılabilir ama pure function tutuyoruz.
+        return tasks
+        
+    return sorted_tasks

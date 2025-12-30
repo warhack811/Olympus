@@ -1,0 +1,52 @@
+# app/orchestrator_v42/plugins/model_selector.py
+
+import logging
+from typing import List, Dict, Any
+
+logger = logging.getLogger("orchestrator.selector")
+
+def select(required_capabilities: List[str], catalog: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Model Seçici (Model Selector).
+    
+    Gereken yeteneklerle katalogdaki modelleri eşleştirir ve en uygun modeli seçer.
+    Basit bir puanlama algoritması kullanır.
+    """
+    logger.debug(f"Model seçimi yapılıyor. Gereksinimler: {required_capabilities}")
+    
+    best_model = None
+    best_score = -100
+    
+    # Basit Puanlama Mantığı
+    for model in catalog:
+        score = 0
+        model_caps = model.get("capabilities", [])
+        
+        # Yetenek Eşleşmesi
+        for req in required_capabilities:
+            if req in model_caps:
+                score += 2 # Eşleşen her yetenek için ödül
+            else:
+                score -= 3 # Eksik yetenek için ceza
+        
+        # Tier Bonusları (Deterministik tercih için)
+        tier = model.get("tier", "")
+        if tier == "dengeli":
+            score += 2
+        elif tier == "hizli":
+            score += 1
+            
+        logger.debug(f"Aday: {model['model_id']} | Puan: {score}")
+        
+        if score > best_score:
+            best_score = score
+            best_model = model
+            
+    selected_id = best_model["model_id"] if best_model else "varsayilan_model"
+    
+    return {
+        "selected_model_id": selected_id,
+        "score": best_score,
+        "candidates_considered": len(catalog),
+        "reason": "taslak: yetenek puanlamasina gore secildi"
+    }

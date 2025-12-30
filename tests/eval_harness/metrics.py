@@ -1,0 +1,20 @@
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass
+class EvalMetrics:
+    hallucination_flag: int = 0
+    context_adherence: int = 0
+    memory_recall_accuracy: int = 0
+    event_accuracy: int = 0
+    search_quality: int = 0
+
+    latency_ms: int = 0
+    serper_calls: int = 0
+    token_usage_est: int = 0  # yaklaşık; kesin token yoksa kaba hesap
+
+    notes: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

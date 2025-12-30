@@ -1,0 +1,39 @@
+# app/orchestrator_v42/plugins/intent_classifier.py
+
+import logging
+from typing import Dict, Any, Optional
+
+# Logger isimlendirmesi: Genel 'orchestrator' namespace'i altında 'intent' modülü
+logger = logging.getLogger("orchestrator.intent")
+
+async def classify(message: str, username: str | None = None) -> Dict[str, Any]:
+    """
+    TASLAK: Başlangıç Aşaması Niyet Sınıflandırıcı.
+    
+    Gelecekte, bu fonksiyon bir Dil Modeli çağırarak şunları belirleyecektir:
+    - Kullanıcı niyeti (görevler)
+    - Karmaşıklık seviyesi
+    - Alan bilgisi
+    - Bilgi Getirme (RAG) gereksinimi
+    - Araç ipuçları
+    
+    Mevcut Davranış: Statik, belirlenmiş bir 'sohbet' niyeti döndürür.
+    """
+    logger.debug(f"Kullanıcı ({username}) için niyet sınıflandırması yapılıyor: {message[:50]}...")
+    
+    # Taslak Şemasına Uygun Statik Yanıt
+    return {
+        "tasks": [
+            {
+                "id": "t1",
+                "type": "chat",
+                "depends_on": [],
+                "priority": 1
+            }
+        ],
+        "composer": "sequential",
+        "complexity": "low",
+        "domain": "general",
+        "rag_decision": "off",
+        "tool_hints": []
+    }

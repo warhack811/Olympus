@@ -1,0 +1,75 @@
+# app/orchestrator_v42/plugins/runtime_state.py
+
+import time
+from typing import Dict, Any, Optional
+
+class RuntimeState:
+    """
+    Süreç İçi (In-Memory) Durum Yöneticisi.
+    
+    Erişim anahtarlarının (keys) anlık durumlarını (RPM, TPM, hata sayıları, 
+    cooldown ve devre kesici süreleri) takip eder.
+    
+    Bu sınıf bir Singleton olarak kullanılmalıdır (örneğin Gateway içinde tek bir örnek).
+    """
+    
+    def __init__(self):
+        # keys yapısı: { key_id: { "rpm": 0, "tpm": 0, "error_count": 0, "last_error_ts": 0.0, "cooldown_until": 0.0, "circuit_open_until": 0.0 }}
+        self.keys: Dict[str, Dict[str, Any]] = {}
+        self.last_selected_key: Optional[str] = None
+
+    def _ensure_key(self, key_id: str):
+        """Anahtar kaydı yoksa varsayılan değerlerle oluşturur."""
+        if key_id not in self.keys:
+            self.keys[key_id] = {
+                "rpm": 0,
+                "tpm": 0,
+                "error_count": 0, 
+                "last_error_ts": 0.0,
+                "cooldown_until": 0.0,
+                "circuit_open_until": 0.0
+            }
+
+    def get_key_snapshot(self) -> Dict[str, Any]:
+        """Tüm anahtarların anlık durumunun kopyasını döndürür."""
+        # Derin kopya yerine yüzeysel kopya (dict comprehension) genellikle yeterli ve hızlıdır
+        return {k: v.copy() for k, v in self.keys.items()}
+
+    def record_success(self, key_id: str):
+        """Başarılı bir kullanım kaydeder (RPM, TPM artırır, hata sayısını sıfırlar)."""
+        self._ensure_key(key_id)
+        # Basit sayaç mantığı (Gerçek bir implementasyonda kayan pencere (sliding window) gerekir)
+        self.keys[key_id]["rpm"] += 1 
+        self.keys[key_id]["tpm"] += 1
+        # Başarı durumunda ardışık hata sayacı sıfırlanabilir (veya azaltılabilir)
+        self.keys[key_id]["error_count"] = 0 
+
+    def record_failure(self, key_id: str, error_type: str = "unknown"):
+        """
+        Hata durumunu kaydeder.
+        
+        Args:
+            key_id: Hata alan anahtar.
+            error_type: "429", "timeout", "unknown" vb.
+        """
+        self._ensure_key(key_id)
+        now = time.time()
+        
+        entry = self.keys[key_id]
+        entry["error_count"] += 1
+        entry["last_error_ts"] = now
+        
+        # Basit Politikalar (Stub State içinde de kısmen tutulabilir veya tamamen Policy sınıfına bırakılabilir)
+        # Burada sadece ham veriyi kaydediyoruz, kararı Policy verecek.
+        
+    def is_in_cooldown(self, key_id: str, now_ts: float) -> bool:
+        """Anahtarın cooldown (soğuma) süresinde olup olmadığını kontrol eder."""
+        if key_id not in self.keys:
+            return False
+        return self.keys[key_id]["cooldown_until"] > now_ts
+
+    def is_circuit_open(self, key_id: str, now_ts: float) -> bool:
+        """Anahtarın devre kesicisinin (circuit breaker) açık olup olmadığını kontrol eder."""
+        if key_id not in self.keys:
+            return False
+        return self.keys[key_id]["circuit_open_until"] > now_ts

@@ -1,0 +1,201 @@
+# app/orchestrator_v42/plugins/intent_classifier.py
+
+import logging
+from typing import Dict, Any, List
+
+logger = logging.getLogger("orchestrator.intent")
+
+async def classify(message: str, username: str | None = None) -> Dict[str, Any]:
+    """
+    Niyet Sınıflandırıcı (Intent Classifier) - Kural Tabanlı Motor.
+    
+    Kullanıcı mesajını anahtar kelimelere göre analiz eder ve görev (task) listesi oluşturur.
+    Deterministic (belirlenimci) çalışır, LLM kullanmaz.
+    
+    Dönüş Şeması:
+    {
+        "tasks": [{"id": "t1", "type": "...", ...}],
+        "composer": "sequential|parallel",
+        "complexity": "low|medium|high",
+        "domain": "general|coding|search|image|productivity",
+        "rag_decision": "off|maybe|on",
+        "tool_hints": [...],
+        "matched_rules": [...]
+    }
+    """
+    try:
+        # Varsayılan Değerler
+        domain = "general"
+        complexity = "low"
+        rag_decision = "off"
+        composer = "sequential"
+        tool_hints = []
+        matched_rules = []
+        tasks = []
+        
+        msg_lower = message.lower() if message else ""
+        
+        # --- KURAL SETLERİ ---
+        
+        # 1. Kod / Yazılım (High Priority)
+        # "python", "javascript", "hata", "bug", "stack trace", "kod", "refactor", "unit test", "regex"
+        coding_keywords = ["python", "javascript", "hata", "bug", "stack trace", "kod", "refactor", "unit test", "regex"]
+        is_coding = any(kw in msg_lower for kw in coding_keywords)
+        
+        if is_coding:
+            domain = "coding"
+            tool_hints.append("kod_yazma")
+            if complexity == "low":
+                complexity = "medium"
+            matched_rules.append("kural_coding")
+
+        # 2. İnternet Arama / Bilgi
+        # "araştır", "google", "web", "internet", "kaynak", "link", "son haber", "güncel"
+        search_keywords = ["araştır", "google", "web", "internet", "kaynak", "link", "son haber", "güncel"]
+        is_search = any(kw in msg_lower for kw in search_keywords)
+        
+        if is_search:
+            # Eğer zaten coding değilse domain'i search yap, coding ise ana domain coding kalsın ama search de eklensin.
+            if domain == "general":
+                domain = "search"
+            
+            tool_hints.append("internet_arama")
+            rag_decision = "maybe"
+            matched_rules.append("kural_search")
+
+        # 3. Görsel Üretim
+        # "görsel", "resim", "logo", "afiş", "illustration", "tasarım", "image"
+        image_keywords = ["görsel", "resim", "logo", "afiş", "illustration", "tasarım", "image"]
+        is_image = any(kw in msg_lower for kw in image_keywords)
+        
+        if is_image:
+            domain = "image"
+            tool_hints.append("gorsel_uretim")
+            matched_rules.append("kural_image")
+            
+        # 4. Üretkenlik / Ajan
+        # "plan", "takvim", "hatırlat", "mail", "toplantı", "özetle", "liste"
+        prod_keywords = ["plan", "takvim", "hatırlat", "mail", "toplantı", "özetle", "liste"]
+        is_prod = any(kw in msg_lower for kw in prod_keywords)
+        
+        if is_prod:
+            if domain == "general":
+                domain = "productivity"
+            tool_hints.append("ajan")
+            matched_rules.append("kural_productivity")
+
+        # --- TASK OLUŞTURMA (MULTI-INTENT) ---
+        
+        # Senaryo: Search + Code (Örn: "İnternetten ara sonra python kodu yaz")
+        if is_search and is_coding:
+            matched_rules.append("multi_intent_search_then_code")
+            composer = "sequential"
+            tasks = [
+                {
+                    "id": "t1", 
+                    "type": "web_search", 
+                    "depends_on": [], 
+                    "priority": 1, 
+                    "meta": {"desc": "Bilgi toplama"}
+                },
+                {
+                    "id": "t2", 
+                    "type": "code", 
+                    "depends_on": ["t1"], 
+                    "priority": 2, 
+                    "meta": {"desc": "Kod oluşturma"}
+                }
+            ]
+            
+        # Senaryo: Image + Chat (Örn: "Logo çiz") -> Chat genellikle görsel promptunu hazırlar veya sunar.
+        # Burada özel bir multi-intent kuralı tanımlayalım
+        elif is_image and not is_coding: # Coding ve image nadiren birlikte olur, olursa coding baskın gelebilir.
+             matched_rules.append("single_intent_image") # Basit tutalım, sadece image taskı veya chat+image
+             # Genelde tek task olarak image_generate yetebilir, ama bazen prompt iyileştirme için chat gerekir.
+             # Kural gereği: "Eğer image+chat tetikliyorsa 2 task" dendi ama 'chat' bir keyword değil, varsayılan.
+             # Biz basitçe image algılandıysa direkt image taskı verelim, orchestration bunu halleder.
+             # Veya kullanıcının isteğine tam uymak için:
+             tasks = [
+                 {
+                    "id": "t1",
+                    "type": "image_generate",
+                    "depends_on": [],
+                    "priority": 1,
+                    "meta": {"desc": "Görsel üretimi"}
+                 }
+             ]
+
+        # Tekil Intentler
+        elif is_coding:
+            tasks = [{
+                "id": "t1", 
+                "type": "code", 
+                "depends_on": [], 
+                "priority": 1,
+                "meta": {"desc": "Kodlama görevi"}
+            }]
+            
+        elif is_search:
+            tasks = [{
+                "id": "t1", 
+                "type": "web_search", 
+                "depends_on": [], 
+                "priority": 1,
+                "meta": {"desc": "Arama görevi"}
+            }]
+            
+        elif is_prod:
+             tasks = [{
+                "id": "t1", 
+                "type": "productivity", 
+                "depends_on": [], 
+                "priority": 1,
+                "meta": {"desc": "Üretkenlik görevi"}
+            }]
+            
+        else:
+            # Varsayılan (General Chat)
+            matched_rules.append("default_general_chat")
+            tasks = [{
+                "id": "t1", 
+                "type": "chat", 
+                "depends_on": [], 
+                "priority": 1,
+                "meta": {"desc": "Genel sohbet"}
+            }]
+            
+        # --- KARMAŞIKLIK ANALİZİ ---
+        # Kelime sayısı > 120 veya anahtar kelimeler
+        word_count = len(message.split())
+        complex_keywords = ["detaylı", "adım adım", "derin"]
+        is_complex = word_count > 120 or any(kw in msg_lower for kw in complex_keywords)
+        
+        if is_complex:
+            complexity = "high"
+            matched_rules.append("complexity_high")
+        elif complexity == "low" and (is_coding or is_search):
+            complexity = "medium"
+            matched_rules.append("complexity_medium_implicit")
+
+        return {
+            "tasks": tasks,
+            "composer": composer,
+            "complexity": complexity,
+            "domain": domain,
+            "rag_decision": rag_decision,
+            "tool_hints": tool_hints,
+            "matched_rules": matched_rules
+        }
+
+    except Exception as e:
+        logger.error(f"Intent sınıflandırma hatası: {e}")
+        # Fail-safe: Varsayılan chat intent
+        return {
+            "tasks": [{"id": "t1", "type": "chat", "depends_on": [], "priority": 1}],
+            "composer": "sequential",
+            "complexity": "low",
+            "domain": "general",
+            "rag_decision": "off",
+            "tool_hints": [],
+            "matched_rules": ["hata_failsafe"]
+        }

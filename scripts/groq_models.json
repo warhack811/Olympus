@@ -1,0 +1,176 @@
+{
+  "api_keys_found": 4,
+  "total_models": 21,
+  "all_models": [
+    "moonshotai/kimi-k2-instruct",
+    "llama-3.1-8b-instant",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "llama-3.3-70b-versatile",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "whisper-large-v3",
+    "qwen/qwen3-32b",
+    "playai-tts-arabic",
+    "whisper-large-v3-turbo",
+    "groq/compound-mini",
+    "moonshotai/kimi-k2-instruct-0905",
+    "meta-llama/llama-prompt-guard-2-86m",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-guard-4-12b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-safeguard-20b",
+    "allam-2-7b",
+    "canopylabs/orpheus-arabic-saudi",
+    "meta-llama/llama-prompt-guard-2-22m",
+    "playai-tts",
+    "groq/compound"
+  ],
+  "test_results": [
+    {
+      "model": "moonshotai/kimi-k2-instruct",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "10000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "llama-3.1-8b-instant",
+      "available": true,
+      "rpm_limit": "14400",
+      "tpm_limit": "6000",
+      "rpm_remaining": "14399"
+    },
+    {
+      "model": "meta-llama/llama-4-maverick-17b-128e-instruct",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "6000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "llama-3.3-70b-versatile",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "12000",
+      "rpm_remaining": "998"
+    },
+    {
+      "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "30000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "whisper-large-v3",
+      "available": true,
+      "rpm_limit": null,
+      "tpm_limit": null,
+      "rpm_remaining": null
+    },
+    {
+      "model": "qwen/qwen3-32b",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "6000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "playai-tts-arabic",
+      "available": true,
+      "rpm_limit": null,
+      "tpm_limit": null,
+      "rpm_remaining": null
+    },
+    {
+      "model": "whisper-large-v3-turbo",
+      "available": true,
+      "rpm_limit": null,
+      "tpm_limit": null,
+      "rpm_remaining": null
+    },
+    {
+      "model": "groq/compound-mini",
+      "available": true,
+      "rpm_limit": "250",
+      "tpm_limit": "70000",
+      "rpm_remaining": "249"
+    },
+    {
+      "model": "moonshotai/kimi-k2-instruct-0905",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "10000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "meta-llama/llama-prompt-guard-2-86m",
+      "available": true,
+      "rpm_limit": "14400",
+      "tpm_limit": "15000",
+      "rpm_remaining": "14399"
+    },
+    {
+      "model": "openai/gpt-oss-20b",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "8000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "meta-llama/llama-guard-4-12b",
+      "available": true,
+      "rpm_limit": "14400",
+      "tpm_limit": "15000",
+      "rpm_remaining": "14399"
+    },
+    {
+      "model": "openai/gpt-oss-120b",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "8000",
+      "rpm_remaining": "998"
+    },
+    {
+      "model": "openai/gpt-oss-safeguard-20b",
+      "available": true,
+      "rpm_limit": "1000",
+      "tpm_limit": "8000",
+      "rpm_remaining": "999"
+    },
+    {
+      "model": "allam-2-7b",
+      "available": true,
+      "rpm_limit": "7000",
+      "tpm_limit": "6000",
+      "rpm_remaining": "6999"
+    },
+    {
+      "model": "canopylabs/orpheus-arabic-saudi",
+      "available": true,
+      "rpm_limit": null,
+      "tpm_limit": null,
+      "rpm_remaining": null
+    },
+    {
+      "model": "meta-llama/llama-prompt-guard-2-22m",
+      "available": true,
+      "rpm_limit": "14400",
+      "tpm_limit": "15000",
+      "rpm_remaining": "14399"
+    },
+    {
+      "model": "playai-tts",
+      "available": true,
+      "rpm_limit": null,
+      "tpm_limit": null,
+      "rpm_remaining": null
+    },
+    {
+      "model": "groq/compound",
+      "available": true,
+      "rpm_limit": "250",
+      "tpm_limit": "70000",
+      "rpm_remaining": "249"
+    }
+  ]
+}
