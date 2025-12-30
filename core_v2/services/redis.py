@@ -1,10 +1,8 @@
-import logging
-import ssl
-from typing import Optional, Any
 import redis.asyncio as redis
 from core_v2.config.settings import settings
+import logging
+from typing import Optional, Any
 
-# Configure structured logging
 logger = logging.getLogger("core_v2.services.redis")
 
 class RedisService:
@@ -13,12 +11,19 @@ class RedisService:
     Implements 'Fail-open' logic: If Redis is down, methods return None/False instead of crashing.
     """
     _instance: Optional["RedisService"] = None
-    _client: Optional[redis.Redis] = None
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            cls._instance = super(RedisService, cls).__new__(cls)
+            cls._instance._initialized = False
         return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self._client: Optional[redis.Redis] = None
+        self._initialized = True
 
     async def connect(self) -> None:
         """Initializes the Redis connection pool."""
@@ -26,14 +31,25 @@ class RedisService:
             return
 
         try:
-            kwargs = self._get_connection_kwargs()
+            kwargs = {
+                "encoding": "utf-8",
+                "decode_responses": True,
+                "socket_timeout": 5.0,
+                # "retry_on_timeout": True # Removed to keep kwargs simple as per request, relying on defaults or re-adding if needed carefully
+            }
+            
+            # Simple SSL configuration for Upstash/Cloud
+            if settings.REDIS_URL.startswith("rediss://"):
+                kwargs["ssl_cert_reqs"] = "none"
+
             self._client = redis.from_url(settings.REDIS_URL, **kwargs)
             
-            # Fast ping to verify connection
+            # Connection Test
             await self._client.ping()
             logger.info(f"✅ Redis connected: {settings.REDIS_URL.split('@')[-1]}")
+            
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {str(e)}. Proceeding without Cache (Fail-Open).")
+            logger.error(f"❌ Redis connection failed: {e}. Proceeding without Cache (Fail-Open).")
             self._client = None
 
     async def disconnect(self) -> None:
@@ -42,26 +58,6 @@ class RedisService:
             await self._client.close()
             self._client = None
             logger.info("Redis disconnected.")
-
-    def _get_connection_kwargs(self) -> dict:
-        """Configures SSL for 'rediss://' (Upstash/Production) URLs."""
-        kwargs: dict[str, Any] = {
-            "decode_responses": True,
-            "socket_timeout": 5.0,
-            "retry_on_timeout": True
-        }
-        
-        # Cloud/SSL Logic
-        if settings.REDIS_URL.startswith("rediss://"):
-            kwargs["ssl_cert_reqs"] = settings.REDIS_SSL_CERT_REQS
-            if settings.REDIS_SSL_CERT_REQS == "none":
-                # Upstash usually needs manual context when cert_reqs is none
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                kwargs["ssl_context"] = context
-        
-        return kwargs
 
     @property
     def client(self) -> Optional[redis.Redis]:
