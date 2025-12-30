@@ -11,7 +11,8 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { authApi } from '@/api/client' // Need a proper admin user api
+import { authApi, API_DOMAIN } from '@/api/client' // Need a proper admin user api
+
 
 interface User {
     username: string
@@ -32,11 +33,11 @@ interface User {
 // Temporary Admin API wrapper (should be moved to api/admin.ts)
 const adminApi = {
     getUsers: async () => {
-        const res = await fetch('/api/admin/users').then(r => r.json())
+        const res = await fetch(`${API_DOMAIN}/api/admin/users`).then(r => r.json())
         return res
     },
     updateUser: async (username: string, data: any) => {
-        const res = await fetch(`/api/admin/users/${username}`, {
+        const res = await fetch(`${API_DOMAIN}/api/admin/users/${username}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)

@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { API_DOMAIN } from '@/api/client';
+
 import { useChatStore } from '@/stores';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Bug, ChevronRight, ChevronDown, ShieldAlert, BarChart3, Settings2 } from 'lucide-react';
@@ -21,7 +23,7 @@ export function OrchDebugPanel() {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`/api/v1/admin/orch/snapshot?verbose=${isVerbose}`);
+            const response = await fetch(`${API_DOMAIN}/api/v1/admin/orch/snapshot?verbose=${isVerbose}`);
             if (response.status === 401 || response.status === 403) {
                 setError('Admin oturumu gerekli');
                 return;

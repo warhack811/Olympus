@@ -1,7 +1,8 @@
 
 import { useState, useEffect } from 'react'
 import { Switch } from '@/components/ui/Switch'
-import { fetchApi } from '@/api/client' // Assuming we can expose fetchApi or create a new method
+import { fetchApi, API_DOMAIN } from '@/api/client' // Assuming we can expose fetchApi or create a new method
+
 
 interface FeatureFlags {
     chat: boolean
@@ -23,10 +24,10 @@ export function SystemControls() {
     const loadFeatures = async () => {
         try {
             // Hardcoding fetch for now as systemApi isn't fully updated yet with this specific endpoint structure
-            const res = await fetch('/api/system/features').then(r => r.json())
-            setFeatures(res.features)
-        } catch (error) {
-            console.error('Failed to load features', error)
+            const res = await fetch(`${API_DOMAIN}/api/system/features`).then(r => r.json())
+            setFeatures(res.features || {})
+        } catch (e) {
+            console.error(e)
         } finally {
             setLoading(false)
         }
@@ -37,7 +38,7 @@ export function SystemControls() {
         setFeatures(prev => prev ? ({ ...prev, [key]: enabled }) : null)
 
         try {
-            const res = await fetch('/api/system/features/toggle', {
+            const res = await fetch(`${API_DOMAIN}/api/system/features/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ key, enabled })

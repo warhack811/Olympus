@@ -17,7 +17,10 @@ import type {
     Persona
 } from '@/types'
 
-const API_BASE = '/api/v1'
+// Base URL from Env or Default to Localhost (ignoring Vite proxy for consistency)
+export const API_DOMAIN = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE = `${API_DOMAIN}/api/v1`
+
 
 /**
  * Base fetch wrapper with error handling

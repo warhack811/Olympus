@@ -1,5 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
+import { API_DOMAIN } from '@/api/client';
+
 import { Card } from '@/components/ui/Card';
 import { Progress } from '@/components/ui/Progress';
 import { Badge } from '@/components/ui/Badge';
@@ -40,7 +42,7 @@ export function ApiUsageStats() {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch('/api/v1/admin/api-keys');
+            const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys`);
             if (!res.ok) throw new Error('API verisi alınamadı');
             const data = await res.json();
             setKeys(data);
@@ -64,7 +66,7 @@ export function ApiUsageStats() {
             // Promise.all daha hızlı
             const promises = keys.map(async (k) => {
                 try {
-                    const res = await fetch(`/api/v1/admin/api-keys/${k.key_name}/refresh`, {
+                    const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys/${k.key_name}/refresh`, {
                         method: 'POST'
                     });
                     if (res.ok) successCount++;

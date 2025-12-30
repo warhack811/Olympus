@@ -1,5 +1,7 @@
 
 import React, { useState } from 'react';
+import { API_DOMAIN } from '@/api/client';
+
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -25,7 +27,7 @@ export function ApiKeysManager() {
     const fetchKeys = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/v1/admin/api-keys');
+            const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys`);
             if (!res.ok) throw new Error('Failed');
             const data = await res.json();
             setKeys(data);
@@ -44,7 +46,7 @@ export function ApiKeysManager() {
         if (!formData.key_name || !formData.value) return;
 
         try {
-            const res = await fetch('/api/v1/admin/api-keys', {
+            const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(formData)
@@ -67,7 +69,7 @@ export function ApiKeysManager() {
         if (!confirm(`${keyName} silinecek. Emin misiniz?`)) return;
 
         try {
-            const res = await fetch(`/api/v1/admin/api-keys/${keyName}`, { method: 'DELETE' });
+            const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys/${keyName}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Silinemedi');
             toast({ title: "Silindi", description: "Anahtar kaldırıldı." });
             fetchKeys();
@@ -93,7 +95,7 @@ export function ApiKeysManager() {
         }
 
         try {
-            const res = await fetch(`/api/v1/admin/api-keys/${keyName}/reveal`);
+            const res = await fetch(`${API_DOMAIN}/api/v1/admin/api-keys/${keyName}/reveal`);
             if (!res.ok) throw new Error('Reveal failed');
             const data = await res.json();
             setRevealedKeys(prev => ({ ...prev, [keyName]: data.value }));
@@ -154,7 +156,7 @@ export function ApiKeysManager() {
                             </div>
                             <div className="bg-yellow-500/10 p-3 rounded-md flex items-start gap-2 text-sm text-yellow-600 dark:text-yellow-400">
                                 <AlertTriangle className="w-4 h-4 mt-0.5" />
-                                <span>Bu işlem sunucudaki .env dosyasını günceller. Değişikliklerin tam olarak yansıması için sunucu yeniden başlatılmalıdır.</span>
+                                <span className="text-xs">Bu işlem sunucudaki .env dosyasını günceller. Değişikliklerin tam olarak yansıması için sunucu yeniden başlatılmalıdır.</span>
                             </div>
                             <Button onClick={handleSave} className="w-full">Kaydet</Button>
                         </div>
