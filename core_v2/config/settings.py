@@ -1,5 +1,5 @@
-from typing import List, Optional, Union
-from pydantic import Field, AnyHttpUrl, validator, field_validator
+from typing import List, Union, Optional
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
 
@@ -34,19 +34,29 @@ class Settings(BaseSettings):
 
     @field_validator("GROQ_API_KEYS", mode="before")
     @classmethod
-    def parse_api_keys(cls, v: Union[str, List[str]]) -> List[str]:
+    def parse_api_keys(cls, v: Union[str, List[str], None]) -> List[str]:
+        if v is None:
+            raise ValueError("GROQ_API_KEYS cannot be None")
+        
+        parsed_keys = []
         if isinstance(v, list):
-            return v
-        if isinstance(v, str):
+            parsed_keys = v
+        elif isinstance(v, str):
             v = v.strip()
             if not v:
-                return []
+                # Empty string provided
+                raise ValueError("GROQ_API_KEYS cannot be empty")
             try:
                 # Try JSON format first
-                return json.loads(v)
+                parsed_keys = json.loads(v)
             except json.JSONDecodeError:
                 # Fallback to CSV
-                return [k.strip() for k in v.split(",") if k.strip()]
-        return []
+                parsed_keys = [k.strip() for k in v.split(",") if k.strip()]
+        
+        # Final validation
+        if not parsed_keys:
+             raise ValueError("GROQ_API_KEYS must contain at least one key")
+        
+        return parsed_keys
 
 settings = Settings()

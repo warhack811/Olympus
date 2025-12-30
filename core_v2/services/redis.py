@@ -31,9 +31,9 @@ class RedisService:
             
             # Fast ping to verify connection
             await self._client.ping()
-            logger.info(f"✅ Redis connected: {settings.REDIS_URL.split('@')[-1]}")  # Hide credentials
+            logger.info(f"✅ Redis connected: {settings.REDIS_URL.split('@')[-1]}")
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {str(e)}. Proceeding without Cache.")
+            logger.error(f"❌ Redis connection failed: {str(e)}. Proceeding without Cache (Fail-Open).")
             self._client = None
 
     async def disconnect(self) -> None:
@@ -55,7 +55,7 @@ class RedisService:
         if settings.REDIS_URL.startswith("rediss://"):
             kwargs["ssl_cert_reqs"] = settings.REDIS_SSL_CERT_REQS
             if settings.REDIS_SSL_CERT_REQS == "none":
-                # Upstash usually needs this context trick when 'none' is specified explicitly
+                # Upstash usually needs manual context when cert_reqs is none
                 context = ssl.create_default_context()
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
@@ -86,6 +86,14 @@ class RedisService:
             logger.warning(f"Redis SET failed for {key}: {e}")
             return False
 
+    async def delete(self, key: str) -> bool:
+        if not self._client: return False
+        try:
+           return await self._client.delete(key)
+        except Exception as e:
+            logger.warning(f"Redis DELETE failed for {key}: {e}")
+            return False
+            
     async def incr(self, key: str) -> Optional[int]:
         if not self._client: return None
         try:
