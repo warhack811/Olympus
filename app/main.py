@@ -81,6 +81,9 @@ app = FastAPI(
     description="Mami AI - Gelişmiş AI Asistan",
     version="4.2.0",
     debug=settings.DEBUG,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 # =============================================================================
