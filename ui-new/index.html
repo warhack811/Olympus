@@ -3,8 +3,7 @@
 
 <head>
 
-  <meta http-equiv="Content-Security-Policy"
-    content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline'; font-src * data: blob: 'unsafe-inline';">
+
   <meta charset="UTF-8" />
 
   <meta name="viewport"
@@ -47,26 +46,7 @@
   <link rel="apple-touch-startup-image" href="./pwa/splash-1242x2208.png"
     media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3)" />
 
-  <!-- Service Worker Registration -->
-  <script>
-    // ZOMBIE SW KILLER
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(function (registrations) {
-        for (let registration of registrations) {
-          registration.unregister().then(function () {
-            console.log('SW Unregistered & Killed');
-          });
-        }
-        if (registrations.length > 0) {
-          caches.keys().then(function (names) {
-            for (let name of names) caches.delete(name);
-            console.log('Caches Cleared');
-            window.location.reload();
-          });
-        }
-      });
-    }
-  </script>
+
 </head>
 
 <body>
