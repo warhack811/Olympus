@@ -71,6 +71,8 @@ try:
     from app.api.routes.documents import router as documents_router
     from app.api.routes.images import router as images_router
     from app.api.routes.preferences import router as preferences_router
+    from app.api.admin_routes import router as admin_router
+    from app.api.admin_api_keys import router as admin_keys_router
     
     # Include Legacy Routers under /api/v1 prefix
     app.include_router(auth_router, prefix="/api/v1/auth", tags=["v1-auth"])
@@ -79,10 +81,26 @@ try:
     app.include_router(documents_router, prefix="/api/v1/user", tags=["v1-documents"])
     app.include_router(images_router, prefix="/api/v1/user", tags=["v1-images"])
     app.include_router(preferences_router, prefix="/api/v1/user", tags=["v1-preferences"])
+    app.include_router(admin_router, prefix="/api/v1/admin", tags=["v1-admin"])
+    app.include_router(admin_keys_router, prefix="/api/v1/admin", tags=["v1-admin"])
     
     logger.info("✅ Legacy Routers (V1) successfully mounted on Core V2")
 except ImportError as e:
     logger.error(f"❌ Failed to import legacy routers: {e}")
+
+# WEBSOCKET (HYBRID BRIDGE)
+from fastapi import WebSocket, WebSocketDisconnect
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Basic Echo for now to keep connection alive
+            await websocket.send_text(f"CoreV2 Echo: {data}")
+    except WebSocketDisconnect:
+        logger.info("WebSocket Client disconnected")
 
 @app.get("/health")
 async def health_check():
