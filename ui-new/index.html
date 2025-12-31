@@ -49,12 +49,19 @@
 
   <!-- Service Worker Registration -->
   <script>
+    // ZOMBIE SW KILLER
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function (registrations) {
         for (let registration of registrations) {
           registration.unregister().then(function () {
-            console.log('Service Worker zorla silindi (Unregistered).');
-            window.location.reload(); // Temizlendikten sonra sayfayı yenile
+            console.log('SW Unregistered & Killed');
+          });
+        }
+        if (registrations.length > 0) {
+          caches.keys().then(function (names) {
+            for (let name of names) caches.delete(name);
+            console.log('Caches Cleared');
+            window.location.reload();
           });
         }
       });
