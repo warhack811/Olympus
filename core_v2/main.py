@@ -50,7 +50,12 @@ app = FastAPI(
 # CORS Middleware (Allow All for Development/MVP)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict this in production!
+    allow_origins=[
+        "https://olympus-dyvv.vercel.app",
+        "https://mami-ai-core.onrender.com",
+        "http://localhost:5173",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

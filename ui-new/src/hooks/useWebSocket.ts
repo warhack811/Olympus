@@ -148,9 +148,8 @@ export function useWebSocket(): UseWebSocketReturn {
         connectionPromise = new Promise<void>((resolve) => {
             try {
                 // Build WebSocket URL
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-                const host = window.location.host
-                const wsUrl = `${protocol}//${host}/ws`
+                const API_URL = import.meta.env.VITE_API_URL || 'https://mami-ai-core.onrender.com'
+                const wsUrl = API_URL.replace(/^http/, 'ws') + '/ws'
 
                 console.log('[WebSocket] Connecting to:', wsUrl)
 
