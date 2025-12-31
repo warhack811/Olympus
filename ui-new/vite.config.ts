@@ -3,27 +3,18 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss(),
+    tailwindcss()
   ],
+  base: '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@/components': path.resolve(__dirname, './src/components'),
-      '@/hooks': path.resolve(__dirname, './src/hooks'),
-      '@/lib': path.resolve(__dirname, './src/lib'),
-      '@/stores': path.resolve(__dirname, './src/stores'),
-      '@/types': path.resolve(__dirname, './src/types'),
-      '@/styles': path.resolve(__dirname, './src/styles'),
-      '@/api': path.resolve(__dirname, './src/api'),
     },
   },
-  base: '/',
   build: {
-    sourcemap: false, // Map files can trigger CSP eval blocks
-    chunkSizeWarningLimit: 1600,
+    sourcemap: false
   }
 })

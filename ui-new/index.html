@@ -46,7 +46,18 @@
     media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3)" />
 
   <!-- Service Worker Registration -->
-
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (let registration of registrations) {
+          registration.unregister().then(function () {
+            console.log('Service Worker zorla silindi (Unregistered).');
+            window.location.reload(); // Temizlendikten sonra sayfayı yenile
+          });
+        }
+      });
+    }
+  </script>
 </head>
 
 <body>
