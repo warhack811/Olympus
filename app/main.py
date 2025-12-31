@@ -93,7 +93,12 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 # CORS middleware - X-Conversation-ID header'ını expose et
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins_list(),
+    allow_origins=[
+        "https://olympus-dyvv.vercel.app",
+        "https://mami-ai-core.onrender.com",
+        "http://localhost:5173",
+        "http://localhost:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
