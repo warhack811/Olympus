@@ -43,8 +43,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     version="2.0.0",
     lifespan=lifespan,
-    docs_url="/docs" if settings.DEBUG else None,
-    redoc_url=None
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 # CORS Middleware (Allow All for Development/MVP)
@@ -59,7 +60,29 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Conversation-ID"],
 )
+
+# FALLBACK: Import Legacy Routers to keep system running
+try:
+    from app.api.auth_routes import router as auth_router
+    from app.api.routes.chat import router as chat_router
+    from app.api.routes.memories import router as memories_router
+    from app.api.routes.documents import router as documents_router
+    from app.api.routes.images import router as images_router
+    from app.api.routes.preferences import router as preferences_router
+    
+    # Include Legacy Routers under /api/v1 prefix
+    app.include_router(auth_router, prefix="/api/v1/auth", tags=["v1-auth"])
+    app.include_router(chat_router, prefix="/api/v1/user", tags=["v1-chat"])
+    app.include_router(memories_router, prefix="/api/v1/user", tags=["v1-memories"])
+    app.include_router(documents_router, prefix="/api/v1/user", tags=["v1-documents"])
+    app.include_router(images_router, prefix="/api/v1/user", tags=["v1-images"])
+    app.include_router(preferences_router, prefix="/api/v1/user", tags=["v1-preferences"])
+    
+    logger.info("✅ Legacy Routers (V1) successfully mounted on Core V2")
+except ImportError as e:
+    logger.error(f"❌ Failed to import legacy routers: {e}")
 
 @app.get("/health")
 async def health_check():
