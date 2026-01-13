@@ -21,21 +21,21 @@ class RagV2Plugin:
         """Check if plugin is enabled via feature flag."""
         # Check both keys for compatibility
         res = feature_enabled("rag_v2", default=False) or feature_enabled("rag_v2_enabled", default=False)
-        logger.info(f"[RAG v2 Plugin] is_enabled checked. Result: {res}")
+        logger.info(f"[RAG v2 Eklentisi] is_enabled kontrolü yapıldı. Sonuç: {res}")
         return res
 
     def process_response(
         self, text: str, context: dict[str, Any] | None = None, options: dict[str, Any] | None = None
     ) -> str:
         """
-        Process the text (context) and return potentially modified version.
+        Metni (bağlamı) işler ve gerekirse değiştirilmiş sürümünü döndürür.
         """
         logger.info(
-            f"[RAG v2 Plugin] process_response called. Context keys: {list(context.keys()) if context else 'None'}"
+            f"[RAG v2 Eklentisi] process_response çağrıldı. Bağlam anahtarları: {list(context.keys()) if context else 'Yok'}"
         )
         try:
             if not context:
-                logger.warning("[RAG v2 Plugin] No context provided. Aborting.")
+                logger.warning("[RAG v2 Eklentisi] Bağlam sağlanmadı. İşlem durduruluyor.")
                 return text
 
             query = context.get("query")
@@ -47,7 +47,7 @@ class RagV2Plugin:
 
             if not (query and owner and scope):
                 logger.warning(
-                    f"[RAG v2 Plugin] Missing required context. query={bool(query)}, owner={bool(owner)}, scope={bool(scope)}"
+                    f"[RAG v2 Eklentisi] Gerekli bağlam bilgileri eksik. query={bool(query)}, owner={bool(owner)}, scope={bool(scope)}"
                 )
                 return text
 
@@ -220,7 +220,7 @@ class RagV2Plugin:
             return text
 
         except Exception as e:
-            logger.exception(f"[RAG v2] Plugin process_response failed: {e}")
+            logger.exception(f"[RAG v2] Eklenti process_response başarısız oldu: {e}")
             try:
                 self._log_plugin_stats(
                     context.get("query", "") if context else "",
@@ -278,7 +278,7 @@ class RagV2Plugin:
             )
             log_stats(stats)
         except Exception as e:
-            logger.exception(f"[RAG v2] _log_plugin_stats failed: {e}")
+            logger.exception(f"[RAG v2] _log_plugin_stats başarısız oldu: {e}")
 
     def should_bypass(self, query: str) -> bool:
         """Return True if query appears to be code/programming intent and RAG should be bypassed."""

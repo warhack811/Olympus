@@ -327,3 +327,4 @@ def get_username_from_request(request: Request) -> str | None:
         return username
 
     return None
+

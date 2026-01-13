@@ -51,3 +51,4 @@ def sample_user_message():
 def sample_code_message():
     """Test için kod içeren mesaj."""
     return "Python'da liste oluşturma:\n```python\nmy_list = [1, 2, 3]\n```"
+

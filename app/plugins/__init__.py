@@ -36,9 +36,9 @@ def register_plugin(plugin: Any) -> None:
     """Plugin'i sisteme kaydet"""
     if hasattr(plugin, "name"):
         _plugins[plugin.name] = plugin
-        logger.info(f"[PLUGIN] Registered: {plugin.name}")
+        logger.info(f"[EKLENTİ] Kaydedildi: {plugin.name}")
     else:
-        logger.warning("[PLUGIN] Plugin has no name attribute")
+        logger.warning("[EKLENTİ] Eklentinin 'name' özniteliği bulunamadı")
 
 
 def get_plugin(name: str) -> Any | None:
@@ -53,9 +53,9 @@ def list_plugins() -> dict[str, Any]:
 
 def load_plugins() -> None:
     """Tum plugin'leri yukle"""
-    logger.info("[PLUGIN] Loading plugins...")
+    logger.info("[EKLENTİ] Eklentiler yükleniyor...")
 
-    # Plugin loading started
+    # Eklenti yükleme başlatıldı
 
     # Async Image Plugin
     try:
@@ -63,11 +63,11 @@ def load_plugins() -> None:
 
         plugin = AsyncImagePlugin()
         register_plugin(plugin)
-        logger.info(f"[PLUGIN] Loaded: async_image v{plugin.version}")
+        logger.info(f"[EKLENTİ] Yüklendi: async_image v{plugin.version}")
     except ImportError as e:
-        logger.debug(f"[PLUGIN] async_image not available: {e}")
+        logger.debug(f"[EKLENTİ] async_image ulaşılamaz durumda: {e}")
     except Exception as e:
-        logger.error(f"[PLUGIN] Error loading async_image: {e}")
+        logger.error(f"[EKLENTİ] async_image yükleme hatası: {e}")
 
     # RAG v2 Plugin
     try:
@@ -75,11 +75,11 @@ def load_plugins() -> None:
 
         plugin = RagV2Plugin()
         register_plugin(plugin)
-        logger.info(f"[PLUGIN] Loaded: rag_v2 v{plugin.version}")
+        logger.info(f"[EKLENTİ] Yüklendi: rag_v2 v{plugin.version}")
     except ImportError as e:
-        logger.warning(f"[PLUGIN] rag_v2 not available: {e}")
+        logger.warning(f"[EKLENTİ] rag_v2 ulaşılamaz durumda: {e}")
     except Exception as e:
-        logger.error(f"[PLUGIN] Error loading rag_v2: {e}")
+        logger.error(f"[EKLENTİ] rag_v2 yükleme hatası: {e}")
 
     # Beautiful Response Plugin
     try:
@@ -87,17 +87,17 @@ def load_plugins() -> None:
 
         plugin = BeautifulResponsePlugin()
         register_plugin(plugin)
-        logger.info(f"[PLUGIN] Loaded: beautiful_response v{plugin.version}")
+        logger.info(f"[EKLENTİ] Yüklendi: beautiful_response v{plugin.version}")
     except ImportError as e:
-        logger.warning(f"[PLUGIN] beautiful_response not available: {e}")
+        logger.warning(f"[EKLENTİ] beautiful_response ulaşılamaz durumda: {e}")
     except Exception as e:
-        logger.error(f"[PLUGIN] Error loading beautiful_response: {e}")
+        logger.error(f"[EKLENTİ] beautiful_response yükleme hatası: {e}")
 
-    logger.info(f"[PLUGIN] Total loaded: {len(_plugins)} plugins")
+    logger.info(f"[EKLENTİ] Toplam yüklenen: {len(_plugins)} eklenti")
 
 
-# Auto-load plugins on import
+# Import sırasında otomatik yükle
 try:
     load_plugins()
 except Exception as e:
-    logger.error(f"[PLUGIN] Failed to load plugins: {e}")
+    logger.error(f"[EKLENTİ] Eklentiler yüklenemedi: {e}")

@@ -276,3 +276,4 @@ class UsageLimiter:
 
 # Dışarıdan kullanım için tek instance
 limiter = UsageLimiter()
+

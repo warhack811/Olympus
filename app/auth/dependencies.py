@@ -209,3 +209,4 @@ def get_optional_user(request: Request) -> User | None:
         return None
 
     return session_service.get_user_from_session_token(token)
+

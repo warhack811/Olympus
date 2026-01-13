@@ -853,3 +853,4 @@ def set_config(key: str, value: Any, updated_by: str = "system") -> bool:
         Başarılı mı
     """
     return config_service.set(key, value, updated_by=updated_by)
+

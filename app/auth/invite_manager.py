@@ -183,3 +183,4 @@ def ensure_initial_invite():
             return existing
 
     return generate_invite("system")
+

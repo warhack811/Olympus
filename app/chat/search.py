@@ -221,3 +221,4 @@ async def handle_internet_action(
         error_trace = traceback.format_exc()
         logger.error(f"[INTERNET] Crash: {error_trace}")
         return f"İnternet modülünde teknik bir hata: {str(e)}"
+

@@ -28,7 +28,7 @@ class BeautifulResponsePlugin:
         # Lazy loading için internal modüller burada tanımlanabilir
         self._processor = None
 
-        logger.info(f"[{self.name.upper()}] Plugin initialized v{self.version}")
+        logger.info(f"[{self.name.upper()}] Eklenti başlatıldı v{self.version}")
 
     def is_enabled(self) -> bool:
         """
@@ -78,7 +78,7 @@ class BeautifulResponsePlugin:
             return text
 
         except Exception as e:
-            logger.error(f"[{self.name.upper()}] Error processing response: {e}")
+            logger.error(f"[{self.name.upper()}] Yanıt işleme hatası: {e}")
             return text
 
     def get_info(self) -> dict[str, Any]:

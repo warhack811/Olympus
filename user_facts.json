@@ -1,0 +1,72 @@
+{
+  "test_user_123": {
+    "name": {
+      "key": "name",
+      "value": "Ahmet",
+      "category": "personal",
+      "confidence": 1.0
+    },
+    "job": {
+      "key": "job",
+      "value": "Yapay Zeka Mühendisi",
+      "category": "work",
+      "confidence": 1.0
+    }
+  },
+  "6a3df945": {
+    "desired_skill": {
+      "key": "desired_skill",
+      "value": "Python",
+      "category": "work",
+      "confidence": 1.0
+    },
+    "learning_method": {
+      "key": "learning_method",
+      "value": "online_courses",
+      "category": "preference",
+      "confidence": 1.0
+    },
+    "learning_resource": {
+      "key": "learning_resource",
+      "value": "udemy",
+      "category": "preference",
+      "confidence": 1.0
+    }
+  },
+  "ddc1424e": {
+    "greeting": {
+      "key": "greeting",
+      "value": "sen nasılsın",
+      "category": "social",
+      "confidence": 1.0
+    }
+  },
+  "c275fad4": {
+    "mood": {
+      "key": "mood",
+      "value": "tired",
+      "category": "health",
+      "confidence": 1.0
+    },
+    "relationship_status": {
+      "key": "relationship_status",
+      "value": "missing someone",
+      "category": "personal",
+      "confidence": 1.0
+    }
+  },
+  "5a724139": {
+    "location": {
+      "key": "location",
+      "value": "Düzce",
+      "category": "personal",
+      "confidence": 1.0
+    },
+    "hometown": {
+      "key": "hometown",
+      "value": "Düzce",
+      "category": "personal",
+      "confidence": 1.0
+    }
+  }
+}

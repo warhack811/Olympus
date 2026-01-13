@@ -192,3 +192,4 @@ class ValidationError(MamiException):
             user_message=user_message or "Geçersiz giriş. Lütfen kontrol edip tekrar deneyin.",
             status_code=400,
         )
+

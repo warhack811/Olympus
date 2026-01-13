@@ -533,3 +533,4 @@ class UITextConfig(SQLModel, table=True):
 
     # Zaman Damgaları
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+

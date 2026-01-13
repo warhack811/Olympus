@@ -18,3 +18,4 @@ Hafıza Türleri:
     - Uzun vadeli: Kalıcı kullanıcı bilgileri (ChromaDB)
     - RAG: Yüklenen dokümanlar (PDF, TXT)
 """
+

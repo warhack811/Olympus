@@ -208,3 +208,4 @@ internet            - İnternet araması
 bela_mode           - Yerel model (Ollama) kullanımı
 groq_enabled        - Groq API kullanımı
 """
+

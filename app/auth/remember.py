@@ -195,3 +195,4 @@ def cleanup_expired_tokens() -> int:
             logger.info(f"[REMEMBER] {removed} adet süresi dolmuş token temizlendi")
 
     return removed
+

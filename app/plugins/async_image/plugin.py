@@ -31,7 +31,7 @@ class AsyncImagePlugin(BasePlugin):
         Plugin devre dışı - Celery/Redis karmaşıklığı yerine
         basit job_queue.py sistemi kullanılıyor.
         """
-        logger.info("[ASYNC_IMAGE_PLUGIN] Plugin disabled - using job_queue fallback")
+        logger.info("[ASYNC_IMAGE_EKLENTİSİ] Eklenti devre dışı - job_queue yedeği kullanılıyor")
         return False
 
     def generate_async(
@@ -54,7 +54,7 @@ class AsyncImagePlugin(BasePlugin):
             dict: {"status": "processing", "task_id": "..."}
         """
         if not self.is_enabled() or not self.has_celery:
-            raise RuntimeError("Async Image plugin is not available")
+            raise RuntimeError("Async Image eklentisi ulaşılamaz durumda")
 
         from app.plugins.async_image.tasks import generate_image_task
 
@@ -65,6 +65,6 @@ class AsyncImagePlugin(BasePlugin):
             username=username, prompt=prompt, conversation_id=conversation_id, user_id=user_id
         )
 
-        logger.info(f"[ASYNC_IMAGE_PLUGIN] Task started: {task.id}")
+        logger.info(f"[ASYNC_IMAGE_EKLENTİSİ] Görev başlatıldı: {task.id}")
 
         return {"status": "processing", "task_id": str(task.id), "message": "Görsel arka planda oluşturuluyor..."}

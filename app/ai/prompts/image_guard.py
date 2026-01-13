@@ -238,3 +238,4 @@ def validate_prompt_minimal(prompt: str) -> bool:
     """
     found = get_forbidden_tokens_in_prompt(prompt)
     return len(found) == 0
+
