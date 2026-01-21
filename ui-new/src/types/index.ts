@@ -118,7 +118,7 @@ export interface Message {
     editedAt?: string
 
     // Rich content
-    sources?: Source[]
+
     images?: MessageImage[]
     attachments?: Attachment[]
     codeBlocks?: CodeBlock[]
@@ -138,21 +138,37 @@ export interface Message {
 
     // Server metadata (from backend extra_metadata field)
     extra_metadata?: {
+        type?: "image" | "text"
+        status?: "queued" | "processing" | "complete" | "error"
         job_id?: string
+        progress?: number
+        queue_position?: number
+        image_url?: string
+        error?: string
         prompt?: string
-        status?: 'queued' | 'processing' | 'complete' | 'error'  // All possible statuses
-        progress?: number       // 0-100
-        queue_position?: number // Sıra pozisyonu
         [key: string]: unknown
     }
+    // Glass Box Reasoning & Sources
+    reasoning_log?: ReasoningStep[]
+    unified_sources?: UnifiedSource[]
 }
 
-export interface Source {
-    url: string
+export interface ReasoningStep {
+    task_id: string
+    category: 'ROUTER' | 'MEMORY' | 'TOOL' | 'SYNTHESIS' | 'OTHER'
+    content: string
+    status: 'pending' | 'completed' | 'failed'
+    timestamp: number
+}
+
+// Replaces legacy Source
+export interface UnifiedSource {
     title: string
-    domain: string
-    snippet?: string
+    url: string
+    snippet: string
     favicon?: string
+    type: 'web' | 'document'
+    metadata?: Record<string, unknown>
 }
 
 export interface MessageImage {
@@ -281,6 +297,7 @@ export interface ImageJob {
     error?: string
     createdAt?: string
     completedAt?: string
+    lastActivityAt?: number // Phase 5: Stuck-job guard
 }
 
 export interface ImageStyle {
@@ -392,4 +409,5 @@ export interface FeatureFlags {
     memoryEnabled: boolean
     voiceEnabled: boolean
     collaborationEnabled: boolean
+    FE_METADATA_FIRST_IMAGE_RENDER: boolean // Phase 5: Metadata-first rendering
 }

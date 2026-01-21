@@ -23,10 +23,13 @@ Kullanım:
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, List, Dict
 
 # RAG v2 modülleri
 from app.memory import rag_v2
+from app.core.telemetry.service import telemetry
+from app.schemas.rdr import EventType
+from app.core.terminal import log
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +52,7 @@ class RagService:
                 text=text, filename=filename, owner=owner, scope=scope, conversation_id=conversation_id
             )
         except Exception as e:
-            logger.error(f"[RAG_SERVICE] Text ingestion failed: {e}")
+            logger.error(f"[RAG_SERVICE] Text ingestion failed: {e}", exc_info=True)
             return 0
 
     def add_file(
@@ -63,7 +66,7 @@ class RagService:
         """Dosyadan belge ekler (PDF veya text)."""
         path = Path(file_path)
         if not path.exists():
-            logger.error(f"[RAG_SERVICE] File not found: {path}")
+            logger.error(f"[RAG_SERVICE] File not found: {path}", exc_info=False)  # File not found doesn't need traceback
             return 0
 
         # PDF için page-aware ingestion
@@ -77,42 +80,42 @@ class RagService:
                 text = path.read_text(encoding="utf-8", errors="replace")
                 return self.add_text(text, filename, owner, scope, conversation_id)
             except Exception as e:
-                logger.error(f"[RAG_SERVICE] File read error: {e}")
+                logger.error(f"[RAG_SERVICE] File read error: {e}", exc_info=True)
                 return 0
 
     # =========================================================================
     # ARAMA (RETRIEVAL)
     # =========================================================================
 
-    def search(
+    async def search(
         self,
         query: str,
-        owner: str,
-        scope: Scope | None = None,
+        owner: str = "global",
         limit: int = 5,
+        scope: Scope = None,
+        mode: str = "fast",
         conversation_id: str | None = None,
         continue_mode: bool = False,
-        mode: str = "deep",
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict]:
         """
-        RAG araması yapar (Hybrid: Vector + Lexical).
-
+        Belgeler içinde anlamsal ve lexical arama yapar.
+        
         Args:
             query: Arama sorgusu
-            owner: Kullanıcı adı
-            scope: Erişim kapsamı
-            limit: Maksimum sonuç
-            conversation_id: Conversation pinning için
-            continue_mode: Devam modu (sonraki sayfalar)
-            mode: "fast" (sadece vector) veya "deep" (hybrid)
-
+            owner: Belge sahibi
+            limit: Döndürülecek sonuç sayısı
+            scope: Arama kapsamı
+            mode: "fast" (Hızlı) veya "deep" (Derin/Rerank)
+            conversation_id: Konuşma kimliği (Pinleme için)
+            continue_mode: Kaldığın yerden devam etme modu
+            
         Returns:
-            List[Dict]: Arama sonuçları
+            list[dict]: Arama sonuçları
         """
         results = []
 
         try:
-            v2_docs = rag_v2.search_documents_v2(
+            v2_docs = await rag_v2.search_documents_v2(
                 query=query,
                 owner=owner,
                 scope=scope or "user",
@@ -137,8 +140,46 @@ class RagService:
                         "score": d.get("hybrid_score", d.get("score")),
                     }
                 )
+            
+            # Multi-document summarization (if detected)
+            from app.memory import rag_v2_multi_doc
+            
+            if rag_v2_multi_doc.detect_multi_doc_query(query):
+                logger.info("[RAG Service] Multi-doc query detected")
+                
+                try:
+                    multi_doc_result = await rag_v2_multi_doc.generate_multi_doc_summary(
+                        query=query,
+                        candidates=v2_docs[:15],
+                        top_k_per_doc=3
+                    )
+                    
+                    if multi_doc_result and multi_doc_result.get("summary"):
+                        # Prepend summary to results
+                        summary_chunk = {
+                            "id": "multi_doc_summary",
+                            "text": multi_doc_result["summary"],
+                            "metadata": {
+                                "filename": "🔍 ÇOKLU BELGE ÖZETİ",
+                                "page": 0,
+                                "chunk_index": -999,
+                                "upload_id": None,
+                                "score": 0.0,
+                                "is_multi_doc_summary": True,
+                                "sources": multi_doc_result["sources_breakdown"],
+                                "total_docs": multi_doc_result["total_docs"]
+                            },
+                            "score": 0.0
+                        }
+                        
+                        results.insert(0, summary_chunk)
+                        logger.info(f"[RAG Service] Multi-doc summary from {multi_doc_result['total_docs']} docs")
+                
+                except Exception as e:
+                    logger.warning(f"[RAG Service] Multi-doc summary failed: {e}", exc_info=True)
+                    
         except Exception as e:
-            logger.error(f"[RAG_SERVICE] Search error: {e}")
+            logger.error(f"[RAG_SERVICE] Search error: {e}", exc_info=True)
 
         return results[:limit]
 
@@ -161,6 +202,58 @@ class RagService:
     def list_user_documents(self, owner: str) -> list[dict[str, Any]]:
         """Kullanıcının belgelerini listeler."""
         return rag_v2.list_documents(owner=owner)
+
+    async def get_shadow_context(self, query: str, owner: str) -> str:
+        """
+        [SHADOW SEARCH] - Plânlama aşamasında doküman farkındalığı sağlar.
+        Hangi belgelerin ne kadar alakalı olduğunu özetler.
+        """
+        try:
+            # Sadece Vektör araması (en hızlısı ve hafif olanı)
+            # [FIX] scope parametresi eklendi
+            v2_docs = await rag_v2.search_documents_v2(query=query, owner=owner, scope="user", top_k=3, mode="fast")
+
+            if not v2_docs:
+                log.info("🔍 [SHADOW SEARCH] Sonuç bulunamadı.")
+                return ""
+
+            # Alakalı belgeleri ve skorları topla
+            relevant_files = {}
+            for d in v2_docs:
+                fname = d.get("filename", "Bilinmeyen")
+                # V2 distance score (lower is better)
+                score = d.get("score", 1.0)
+                relevance = max(0, int((1 - score) * 100))
+
+                if fname not in relevant_files or relevance > relevant_files[fname]:
+                    relevant_files[fname] = relevance
+
+            # Raporlama eşiği: Hibrit arama sayesinde %30'a düşürüldü (Daha hassas)
+            items = [f"{name} (%{score} alaka)" for name, score in relevant_files.items() if score > 30]
+            
+            if items:
+                log.info(f"🔍 [SHADOW SEARCH] Tespit Edildi: {', '.join(items)}")
+            else:
+                log.info(f"🔍 [SHADOW SEARCH] Düşük Alaka: {list(relevant_files.values())}")
+            
+            # [TELEMETRY] Emit discovery event
+            if items:
+                telemetry.emit(
+                    EventType.RETRIEVAL,
+                    {"op": "shadow_discovery", "files": list(relevant_files.keys()), "top_score": max(relevant_files.values())},
+                    component="rag_service"
+                )
+
+            if not relevant_files:
+                return ""
+
+            # Tüm tespit edilenleri (zayıf olsa bile) orkestratöre haber ver
+            all_detected = [f"{name} (%{score})" for name, score in relevant_files.items()]
+            return f"\n[SHADOW SEARCH]: Soruyla alakalı olabilecek belgeler tespit edildi: {', '.join(all_detected)}. Eğer bu belgelerden spesifik bilgi gerekiyorsa 'document_tool' aracını plânına ekle."
+
+        except Exception as e:
+            log.error("🔍 [SHADOW SEARCH] Kritik Hata", e)
+            return ""
 
 
 # Global instance

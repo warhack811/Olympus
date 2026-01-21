@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ModernChatInput } from '@/components/chat/ModernChatInput';
 import {
     Sparkles, Layout, Menu, Plus, MessageSquare,
     Settings, User, ChevronRight, Copy, RefreshCw,
@@ -573,11 +572,9 @@ xgb = XGBRegressor(learning_rate=0.05)`}
                             </div>
 
                             <div className="relative z-30">
-                                <ModernChatInput
-                                    onSendMessage={() => { }}
-                                    isLoading={false}
-                                    theme={isUserMenuOpen ? undefined : currentTheme}
-                                />
+                                <div className="text-center text-[var(--text-secondary)] py-8 text-sm">
+                                    Design Lab - Input Preview
+                                </div>
                             </div>
                         </div>
                     </main>

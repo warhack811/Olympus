@@ -96,30 +96,6 @@ async def get_current_user(request: Request) -> User:
     logger = get_logger(__name__)
     settings = get_settings()
 
-    # --- DEBUG MODU BYPASS ---
-    # Geliştirme sırasında login olmadan test için
-    if settings.DEBUG:
-        # 1. Önce DB'den gerçek admin'i dene
-        try:
-            admin_user = get_user_by_username("admin")
-            if admin_user:
-                return admin_user
-        except Exception:
-            pass
-
-        # 2. DB'de yoksa sanal admin döndür
-        logger.warning("[AUTH] Debug modu aktif: Sanal Admin ile giriş yapılıyor.")
-        return User(
-            id=1,
-            username="admin",
-            role="admin",
-            password_hash="dummy",
-            is_banned=False,
-            limits={"daily_internet": 1000, "daily_image": 1000},
-            permissions={"can_use_internet": True, "censorship_level": 0},
-        )
-    # --- DEBUG MODU SONU ---
-
     # Production: Session token kontrolü
     token = request.cookies.get(SESSION_COOKIE_NAME)
 
@@ -209,4 +185,5 @@ def get_optional_user(request: Request) -> User | None:
         return None
 
     return session_service.get_user_from_session_token(token)
+
 

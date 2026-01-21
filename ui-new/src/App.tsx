@@ -48,7 +48,13 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           {/* FIX: Set basename to "/" to match Vercel root deployment */}
-          <BrowserRouter basename="/">
+          <BrowserRouter
+            basename="/"
+            future={{
+              v7_startTransition: true,
+              v7_relativeSplatPath: true,
+            }}
+          >
             <Suspense fallback={<LoadingScreen />}>
               <Routes>
                 <Route element={<RootLayout />}>

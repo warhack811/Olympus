@@ -30,12 +30,30 @@ except ImportError:
 
 
 # =============================================================================
-# GLOBAL SINGLETON STATE
+# GLOBAL SINGLETON STATE (LOOP-AWARE)
 # =============================================================================
 
-_redis_client: Any = None
-_connection_healthy: bool = False
-_lock = asyncio.Lock()
+# Event loop'lar arasında çakışmayı önlemek için her loop için ayrı state tutuyoruz.
+# (Bkz: Future attached to a different loop hatası)
+_loop_states: dict[int, dict[str, Any]] = {}
+
+def _get_loop_state() -> dict[str, Any]:
+    """Geçerli event loop için state döner."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Loop yoksa (örn. sync context), dummy bir state dönebiliriz 
+        # ama bu sistemde hep asenkron bekliyoruz.
+        return {"client": None, "healthy": False, "lock": None}
+        
+    loop_id = id(loop)
+    if loop_id not in _loop_states:
+        _loop_states[loop_id] = {
+            "client": None,
+            "healthy": False,
+            "lock": asyncio.Lock()
+        }
+    return _loop_states[loop_id]
 
 
 # =============================================================================
@@ -44,7 +62,7 @@ _lock = asyncio.Lock()
 
 async def get_redis() -> Any:
     """
-    Redis async client'ı döndürür (Singleton).
+    Redis async client'ı döndürür (Loop-aware Singleton).
     
     Redis bağlantısı yoksa veya başarısızsa None döner.
     Bu sayede sistem fail-soft çalışır.
@@ -57,14 +75,16 @@ async def get_redis() -> Any:
         >>> if client:
         ...     await client.set("key", "value")
     """
-    global _redis_client, _connection_healthy
-    
     if not REDIS_AVAILABLE:
         return None
         
-    async with _lock:
-        if _redis_client is not None and _connection_healthy:
-            return _redis_client
+    state = _get_loop_state()
+    if state["lock"] is None: # Should not happen if _get_loop_state initializes it
+        return None
+        
+    async with state["lock"]:
+        if state["client"] is not None and state["healthy"]:
+            return state["client"]
             
         # Yeni bağlantı oluştur
         try:
@@ -72,75 +92,93 @@ async def get_redis() -> Any:
             settings = get_settings()
             redis_url = settings.REDIS_URL
             
-            # Connection pool ile client oluştur
-            _redis_client = aioredis.from_url(
+            # Connection pool ile client oluştur (her loop için kendi pool'u)
+            # FIX: ssl_cert_reqs hatasını önlemek için kwarg'ları temizle
+            connection_kwargs = {
+                "socket_timeout": 5.0,
+                "socket_connect_timeout": 5.0,
+                "retry_on_timeout": True,
+                "health_check_interval": 30,
+                "ssl_cert_reqs": None,  # Upstash fix
+            }
+            
+            # Eğer URL'de ssl_cert_reqs varsa temizle veya düzgün geçir
+            if "ssl_cert_reqs" in redis_url:
+                 # Basit çözüm: URL'den parametreyi temizlemek yerine, 
+                 # ssl_cert_reqs'i burada none olarak geçebiliriz ama 
+                 # en güvenlisi bu parametreyi connection_kwargs'a eklememek veya
+                 # connection_class tarafından desteklenmiyorsa süzmek.
+                 pass
+
+            client = aioredis.from_url(
                 redis_url,
                 encoding="utf-8",
                 decode_responses=True,
-                socket_timeout=5.0,       # Okuma timeout
-                socket_connect_timeout=5.0,  # Bağlantı timeout
-                retry_on_timeout=True,
-                health_check_interval=30,  # 30s'de bir health check
+                **connection_kwargs
             )
             
             # Bağlantı testi
-            await _redis_client.ping()
-            _connection_healthy = True
-            logger.info(f"[REDIS] Bağlantı başarılı: {redis_url}")
-            return _redis_client
+            await client.ping()
+            state["client"] = client
+            state["healthy"] = True
+            logger.info(f"[REDIS] Bağlantı başarılı (Loop {id(asyncio.get_running_loop())}): {redis_url}")
+            return client
             
         except (RedisConnectionError, RedisTimeoutError) as e:
             logger.warning(f"[REDIS] Bağlantı hatası: {e}. Working Memory devre dışı.")
-            _redis_client = None
-            _connection_healthy = False
+            state["client"] = None
+            state["healthy"] = False
             return None
         except Exception as e:
             logger.error(f"[REDIS] Beklenmeyen hata: {e}. Working Memory devre dışı.")
-            _redis_client = None
-            _connection_healthy = False
+            state["client"] = None
+            state["healthy"] = False
             return None
 
 
 async def close_redis() -> None:
     """
-    Redis bağlantısını kapatır.
+    Tüm loop'lardaki Redis bağlantılarını kapatır.
     
     Uygulama kapanırken çağrılmalı (graceful shutdown).
     """
-    global _redis_client, _connection_healthy
+    global _loop_states
     
-    async with _lock:
-        if _redis_client is not None:
+    for loop_id, state in list(_loop_states.items()): # Iterate over a copy to allow modification
+        client = state.get("client")
+        if client:
             try:
-                await _redis_client.close()
-                logger.info("[REDIS] Bağlantı kapatıldı.")
+                await client.close()
+                logger.info(f"[REDIS] Bağlantı kapatıldı (Loop {loop_id}).")
             except Exception as e:
-                logger.warning(f"[REDIS] Kapatma hatası: {e}")
-            finally:
-                _redis_client = None
-                _connection_healthy = False
+                logger.warning(f"[REDIS] Kapatma hatası (Loop {loop_id}): {e}")
+        state["client"] = None
+        state["healthy"] = False
+    
+    _loop_states.clear()
 
 
 async def is_redis_healthy() -> bool:
     """
-    Redis bağlantı durumunu kontrol eder.
+    Geçerli loop'taki Redis bağlantı durumunu kontrol eder.
     
     Health check endpoint'leri için kullanılır.
     
     Returns:
         bool: Bağlantı sağlıklı ise True
     """
-    global _connection_healthy
+    state = _get_loop_state()
+    client = state.get("client")
     
-    if not REDIS_AVAILABLE or _redis_client is None:
+    if not REDIS_AVAILABLE or client is None:
         return False
         
     try:
-        await _redis_client.ping()
-        _connection_healthy = True
+        await client.ping()
+        state["healthy"] = True
         return True
     except Exception:
-        _connection_healthy = False
+        state["healthy"] = False
         return False
 
 

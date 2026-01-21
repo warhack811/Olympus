@@ -124,7 +124,7 @@ def create_conversation(
             return new_conv
         except Exception as e:
             session.rollback()
-            logger.error(f"[CONV] Oluşturma hatası: {e}")
+            logger.error(f"[CONV] Oluşturma hatası: {e}", exc_info=True)
             raise
 
 
@@ -201,7 +201,14 @@ def load_messages(username: str, conv_id: str) -> list:
         return list(session.exec(statement).all())
 
 
-def append_message(username: str, conv_id: str, role: str, text: str, extra_metadata: dict[str, Any] | None = None):
+def append_message(
+    username: str, 
+    conv_id: str, 
+    role: str, 
+    text: str, 
+    extra_metadata: dict[str, Any] | None = None,
+    images: list[str] | None = None
+):
     """
     Sohbete mesaj ekler.
 
@@ -211,6 +218,7 @@ def append_message(username: str, conv_id: str, role: str, text: str, extra_meta
         role: Mesaj rolü (user, bot, system)
         text: Mesaj içeriği
         extra_metadata: Ek bilgiler
+        images: Görsel yolları
 
     Returns:
         Message: Eklenen mesaj
@@ -224,11 +232,15 @@ def append_message(username: str, conv_id: str, role: str, text: str, extra_meta
         if not conv or conv.user_id != user_id:
             raise ValueError(f"Sohbet bulunamadı veya yetki yok: {conv_id}")
 
+        meta = extra_metadata or {}
+        if images:
+            meta["images"] = images
+
         new_msg = Message(
             conversation_id=conv_id,
             role=role,
             content=text,
-            extra_metadata=extra_metadata or {},
+            extra_metadata=meta,
             created_at=datetime.utcnow(),
         )
 
@@ -243,13 +255,13 @@ def append_message(username: str, conv_id: str, role: str, text: str, extra_meta
             return new_msg
         except Exception as e:
             session.rollback()
-            logger.error(f"[CONV] Mesaj ekleme hatası: {e}")
+            logger.error(f"[CONV] Mesaj ekleme hatası: {e}", exc_info=True)
             raise
 
 
 def update_message(message_id: int, new_content: str | None = None, new_metadata: dict[str, Any] | None = None) -> bool:
     """
-    Mevcut mesajı günceller.
+    Mevcut mesajı günceller (deep merge ile).
 
     Args:
         message_id: Güncellenecek mesaj ID'si
@@ -258,6 +270,10 @@ def update_message(message_id: int, new_content: str | None = None, new_metadata
 
     Returns:
         bool: Güncelleme başarılı ise True
+    
+    Note:
+        Deep merge kullanılır - mevcut metadata alanları korunur,
+        yeni alanlar eklenir, var olan alanlar güncellenir.
     """
     get_session, _, Message = _get_imports()
 
@@ -271,19 +287,24 @@ def update_message(message_id: int, new_content: str | None = None, new_metadata
             msg.content = new_content
 
         if new_metadata is not None:
-            # Mevcut metadata ile merge et
-            existing = msg.extra_metadata or {}
-            existing.update(new_metadata)
-            msg.extra_metadata = existing
+            # Deep merge: mevcut metadata'yı koru, yeni alanları ekle/güncelle
+            existing_metadata = msg.extra_metadata or {}
+            merged_metadata = {
+                **existing_metadata,
+                **(new_metadata or {})
+            }
+            msg.extra_metadata = merged_metadata
+            logger.debug(f"[CONV] Deep merge: {list(new_metadata.keys())} alanları eklendi/güncellendi")
 
         try:
+            msg.updated_at = datetime.utcnow()
             session.add(msg)
             session.commit()
             logger.info(f"[CONV] Mesaj güncellendi: {message_id}")
             return True
         except Exception as e:
             session.rollback()
-            logger.error(f"[CONV] Mesaj güncelleme hatası: {e}")
+            logger.error(f"[CONV] Mesaj güncelleme hatası: {e}", exc_info=True)
             return False
 
 
@@ -313,7 +334,7 @@ def delete_conversation(username: str, conv_id: str) -> bool:
             return True
         except Exception as e:
             session.rollback()
-            logger.error(f"[CONV] Silme hatası: {e}")
+            logger.error(f"[CONV] Silme hatası: {e}", exc_info=True)
             return False
 
 

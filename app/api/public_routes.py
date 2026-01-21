@@ -147,6 +147,13 @@ async def login(payload: LoginRequest, response: Response, request: Request):
         )
 
     logger.info(f"[AUTH] Giriş başarılı: {user.username} (Remember: {payload.remember_me})")
+    
+    # Analytics: Login event'ini track et
+    try:
+        from app.core.analytics import track_login
+        track_login(user_id=user.id)
+    except Exception as e:
+        logger.error(f"[Analytics] Login event tracking hatası: {e}")
 
     return {"ok": True, "message": "Giriş başarılı.", "username": user.username, "role": user.role}
 
@@ -157,15 +164,23 @@ async def logout(request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE_NAME)
 
     if token:
+        # Get username before invalidating to close WS
+        user = session_service.get_user_from_session_token(token)
+        if user:
+            from app.core.websockets import disconnect_user
+            import asyncio
+            # Arka planda WebSocket'leri kapat (isteği bekletmemek için)
+            asyncio.create_task(disconnect_user(user.username))
+            
         session_service.invalidate_session(token)
 
     # Tarayıcı tarafında cookie'yi sil
-    response.delete_cookie(key=SESSION_COOKIE_NAME, httponly=True, samesite="lax")
+    response.delete_cookie(key=SESSION_COOKIE_NAME, httponly=True, samesite="lax", path="/")
 
     # Beni Hatırla tokenini de sil
     remember_token = request.cookies.get(remember_manager.REMEMBER_COOKIE_NAME)
     if remember_token:
         remember_manager.invalidate_token(remember_token)
-        response.delete_cookie(key=remember_manager.REMEMBER_COOKIE_NAME, httponly=True, samesite="lax")
+        response.delete_cookie(key=remember_manager.REMEMBER_COOKIE_NAME, httponly=True, samesite="lax", path="/")
 
     return {"ok": True, "message": "Çıkış yapıldı."}

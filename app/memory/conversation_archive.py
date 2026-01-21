@@ -44,6 +44,8 @@ class ArchiveSearchResult:
     conversation_id: str
     title: str
     summary: str | None
+    importance: int
+    entities: list[str]
     relevance_score: float
     created_at: datetime
     updated_at: datetime
@@ -185,7 +187,10 @@ class ConversationArchive:
                 )
                 
                 if not conversations:
-                    logger.debug(f"[ARCHIVE] No conversations found for user {user_id}")
+                    from app.config import get_settings
+                    settings = get_settings()
+                    if settings.DEBUG:
+                        logger.debug(f"[ARCHIVE] No conversations found for user {user_id}")
                     return []
                 
                 # Özetlerle eşleştir ve skorla
@@ -198,14 +203,22 @@ class ConversationArchive:
                     # Mesaj sayısını al
                     msg_count = await cls._get_message_count(session, conv.id)
                     
-                    # Relevance skorla (basit keyword matching, gelecekte LLM)
-                    relevance = cls._calculate_relevance(query, conv.title or "", summary_text)
+                    # Relevance skorla
+                    relevance = cls._calculate_relevance(
+                        query, 
+                        conv.title or "", 
+                        summary_text,
+                        importance=summary.importance if summary else 1,
+                        entities=summary.entities if summary else []
+                    )
                     
                     if relevance >= cls.MIN_RELEVANCE_THRESHOLD:
                         results.append(ArchiveSearchResult(
                             conversation_id=conv.id,
                             title=conv.title or "Untitled",
                             summary=summary_text if summary_text else None,
+                            importance=summary.importance if summary else 1,
+                            entities=summary.entities if summary else [],
                             relevance_score=relevance,
                             created_at=conv.created_at,
                             updated_at=conv.updated_at,
@@ -219,7 +232,7 @@ class ConversationArchive:
                 return results[:max_results]
                 
         except Exception as e:
-            logger.error(f"[ARCHIVE] Search error: {e}")
+            logger.error(f"[ARCHIVE] Search error: {e}", exc_info=True)
             return []
     
     @classmethod
@@ -258,34 +271,33 @@ class ConversationArchive:
         return result or 0
     
     @classmethod
-    def _calculate_relevance(cls, query: str, title: str, summary: str) -> float:
+    def _calculate_relevance(cls, query: str, title: str, summary: str, importance: int = 1, entities: list[str] = None) -> float:
         """
-        Basit keyword-based relevance hesaplama.
-        
-        Future: LLM-based semantic matching.
+        Zenginleştirilmiş keyword ve önem tabanlı relevance hesaplama.
         """
         query_words = set(query.lower().split())
-        
-        # Stop words çıkar
         stop_words = {"ne", "nasıl", "nerede", "kim", "bu", "şu", "bir", "ve", "ile"}
         query_words = query_words - stop_words
         
         if not query_words:
-            return 0.5  # Neutral score for generic queries
+            return 0.5
         
-        # Title ve summary'de keyword ara
-        content = f"{title} {summary}".lower()
-        
+        content = f"{title} {summary} {' '.join(entities or [])}".lower()
         matches = sum(1 for word in query_words if word in content)
         
-        # Normalize (0-1)
+        # Temel Skor (Normalize)
         score = matches / len(query_words) if query_words else 0.0
         
-        # Boost for longer summaries (more context = more relevant)
-        if summary and len(summary) > 100:
-            score = min(1.0, score + 0.1)
+        # Importance Boost (Industry Standard)
+        # 10 üzerinden puanlanan bir sistemde her bir puan skora %2.5 katkı sağlar (max %25 boost)
+        score += (importance / 10.0) * 0.25
         
-        return score
+        # Entity Match Boost
+        if entities:
+            entity_matches = sum(1 for e in entities if e.lower() in query.lower())
+            score += entity_matches * 0.1
+        
+        return min(1.0, score)
     
     # ==========================================================================
     # ROLLING SUMMARY
@@ -398,11 +410,14 @@ class ConversationArchive:
                     session.add(new_summary)
                 
                 session.commit()
-                logger.debug(f"[ARCHIVE] Summary updated: conv={conversation_id}")
+                from app.config import get_settings
+                settings = get_settings()
+                if settings.DEBUG:
+                    logger.debug(f"[ARCHIVE] Summary updated: conv={conversation_id}")
                 return True
                 
         except Exception as e:
-            logger.error(f"[ARCHIVE] Summary update error: {e}")
+            logger.error(f"[ARCHIVE] Summary update error: {e}", exc_info=True)
             return False
     
     @classmethod

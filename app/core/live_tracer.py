@@ -1,85 +1,69 @@
-"""
-Mami AI - Live Tracer
-=====================
-Sistemin çalışma mantığını canlı olarak terminale basan yardımcı modül.
-Prodüksiyon loglarından farklı olarak, geliştiriciye "ne oluyor?" sorusunun cevabını
-anlık ve renkli olarak verir.
-"""
-
-import sys
-from datetime import datetime
-
-class Ansi:
-    RESET = "\033[0m"
-    BOLD = "\033[1m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    MAGENTA = "\033[95m"
-    CYAN = "\033[96m"
-    WHITE = "\033[97m"
+from app.core.telemetry.service import telemetry, EventType
+import uuid
 
 class LiveTracer:
     """
-    Sistem akışını terminale renkli basan tracer.
-    Statik metodlar kullanır, instance yaratmaya gerek yoktur.
+    Legacy Adapter for new Telemetry Service.
+    Eski kodlar kırılmasın diye var.
     """
     
-    ENABLED = True
-    
-    @classmethod
-    def _print(cls, color: str, component: str, event: str, detail: str = ""):
-        if not cls.ENABLED:
-            return
-            
-        time_str = datetime.now().strftime("%H:%M:%S")
-        
-        # Format: [TIME] [COMPONENT] EVENT | Detail
-        prefix = f"{Ansi.WHITE}[{time_str}]{Ansi.RESET} {Ansi.BOLD}{color}[{component.upper()}]{Ansi.RESET}"
-        message = f"{Ansi.BOLD}{event}{Ansi.RESET}"
-        
-        if detail:
-            message += f" | {detail}"
-            
-        print(f"{prefix} {message}")
-        sys.stdout.flush()
+    @staticmethod
+    def _get_trace_id() -> str:
+        # Trace ID yoksa geçici üret (Session bazlı trace yakında gelecek)
+        return str(uuid.uuid4())[:8]
 
-    @classmethod
-    def request_in(cls, path: str, method: str):
-        """Yeni bir istek geldiğinde."""
-        cls._print(Ansi.BLUE, "GATEWAY", "Request In", f"{method} {path}")
+    @staticmethod
+    def request_in(path: str, method: str):
+        telemetry.emit(
+            EventType.SYSTEM, 
+            LiveTracer._get_trace_id(), 
+            {"event": "request_in", "path": path, "method": method}
+        )
 
-    @classmethod
-    def routing_decision(cls, route_name: str, confidence: float, reasoning: str = ""):
-        """Router karar verdiğinde."""
-        conf_str = f"{confidence:.2f}"
-        detail = f"Dest: {route_name} (Conf: {conf_str})"
-        if reasoning:
-            detail += f" - {reasoning}"
-        cls._print(Ansi.MAGENTA, "ROUTER", "Decision", detail)
+    @staticmethod
+    def routing_decision(route_name: str, confidence: float, reasoning: str = ""):
+        telemetry.emit(
+            EventType.ROUTING, 
+            LiveTracer._get_trace_id(), 
+            {"route": route_name, "confidence": confidence, "reasoning": reasoning}
+        )
 
-    @classmethod
-    def model_select(cls, model_id: str, provider: str, hint: str):
-        """Model seçildiğinde."""
-        cls._print(Ansi.CYAN, "ADAPTER", "Model Check", f"{provider.upper()} -> {model_id} (Hint: {hint})")
+    @staticmethod
+    def model_select(model_id: str, provider: str, hint: str):
+        telemetry.emit(
+            EventType.LLM_REQUEST, 
+            LiveTracer._get_trace_id(), 
+            {"event": "model_select", "model_id": model_id, "provider": provider, "hint": hint}
+        )
 
-    @classmethod
-    def llm_call(cls, model: str, prompt_len: int):
-        """LLM API çağrısı yapılıyor."""
-        cls._print(Ansi.YELLOW, "LLM", "Calling API", f"Model: {model} | Prompt Len: {prompt_len}")
+    @staticmethod
+    def llm_call(model: str, prompt_len: int):
+        telemetry.emit(
+            EventType.LLM_REQUEST, 
+            LiveTracer._get_trace_id(), 
+            {"event": "llm_call", "model": model, "prompt_len": prompt_len}
+        )
 
-    @classmethod
-    def llm_response(cls, duration_ms: float, token_usage: int = 0):
-        """LLM yanıt döndü."""
-        cls._print(Ansi.GREEN, "LLM", "Response OK", f"Took: {duration_ms:.0f}ms")
+    @staticmethod
+    def llm_response(duration_ms: float, token_usage: int = 0):
+        telemetry.emit(
+            EventType.LLM_REQUEST, 
+            LiveTracer._get_trace_id(), 
+            {"event": "llm_response", "duration_ms": duration_ms, "token_usage": token_usage}
+        )
 
-    @classmethod
-    def error(cls, component: str, error_msg: str):
-        """Hata oluştu."""
-        cls._print(Ansi.RED, component, "ERROR", error_msg)
+    @staticmethod
+    def error(component: str, error_msg: str):
+        telemetry.emit(
+            EventType.SYSTEM, 
+            LiveTracer._get_trace_id(), 
+            {"event": "error", "component": component, "message": error_msg}
+        )
 
-    @classmethod
-    def warning(cls, component: str, msg: str):
-        """Uyarı."""
-        cls._print(Ansi.YELLOW, component, "WARNING", msg)
+    @staticmethod
+    def warning(component: str, msg: str):
+        telemetry.emit(
+            EventType.SYSTEM, 
+            LiveTracer._get_trace_id(), 
+            {"event": "warning", "component": component, "message": msg}
+        )

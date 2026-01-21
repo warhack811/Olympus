@@ -1,6 +1,8 @@
 import logging
 import os
 import sqlite3
+import re
+from app.memory.query_normalizer import query_normalizer
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,7 @@ def init_fts():
             );
             """)
     except Exception as e:
-        logger.warning(f"[RAG v2 Lexical] Init failed (FTS5 might be missing): {e}")
+        logger.warning(f"[RAG v2 Lexical] Init failed (FTS5 might be missing): {e}", exc_info=True)
 
 
 def add_chunks_to_fts(
@@ -114,7 +116,7 @@ def upsert_chunk(
             )
         return True
     except Exception as e:
-        logger.warning(f"[RAG v2 Lexical] Upsert failed: {e}")
+        logger.warning(f"[RAG v2 Lexical] Upsert failed: {e}", exc_info=True)
         return False
 
 
@@ -124,52 +126,45 @@ def lexical_search(query: str, owner: str, scope: str, top_k: int = 50) -> list[
     SQLite FTS5 has 'bm25(rag_v2_fts)' function.
     """
     try:
-        # FTS5 özel karakterlerini escape et
-        # FTS5'te sorunlu karakterler: . " ' ( ) * : ^
-        import re
-
-        sanitized_query = query
-        # FTS5 özel karakterlerini escape et (soru işareti dahil)
-        # ? karakteri FTS5'te özel anlam taşımaz ama SQL parametresi ile karıştırılabilir
-        # Kullanıcı aramasında geçen ? işaretini kaldırıyoruz
-        sanitized_query = re.sub(r'[."\'()*:^?!]', " ", sanitized_query)
-        # Çoklu boşlukları tek boşluğa indir
-        sanitized_query = re.sub(r"\s+", " ", sanitized_query).strip()
+        # 1. Merkezi normalizasyon ve temizlik (Generalized)
+        sanitized_query = query_normalizer.sanitize_for_fts(query)
 
         if not sanitized_query:
             return []
 
         with _get_connection() as conn:
-            # FTS5'te birden fazla kelime OR ile birleştirilmeli
-            words = sanitized_query.split()
+            # FTS5'te arama: Tüm kelimeler geçmeli (AND) 
+            # Özel karakterler (157/1) için kelimeleri tırnak içine alıyoruz
+            words = [f'"{w}"' for w in sanitized_query.split()]
             if len(words) > 1:
-                content_query = " OR ".join(words)
+                content_query = " AND ".join(words)
             else:
-                content_query = sanitized_query
+                content_query = words[0]
 
             # MATCH formatı: content:... AND owner:...
             # Değerleri çift tırnak içine alarak güvenli hale getiriyoruz
             fts_query = f'content:({content_query}) AND owner:"{owner}" AND scope:"{scope}"'
 
-            cursor = conn.execute(
-                """
-                SELECT
-                    filename,
-                    page_number,
-                    chunk_index,
-                    upload_id,
-                    content,
-                    bm25(rag_v2_fts) as score
-                FROM rag_v2_fts
-                WHERE rag_v2_fts MATCH ?
-                ORDER BY score ASC
-                LIMIT ?
-                """,
-                (fts_query, top_k),
-            )
+            def perform_query(q):
+                return conn.execute(
+                    """
+                    SELECT filename, page_number, chunk_index, upload_id, content, bm25(rag_v2_fts) as score
+                    FROM rag_v2_fts WHERE rag_v2_fts MATCH ? ORDER BY score ASC LIMIT ?
+                    """,
+                    (q, top_k),
+                ).fetchall()
+
+            rows = perform_query(fts_query)
+            
+            # FALLBACK: AND ile sonuç yoksa OR dene
+            if not rows and len(words) > 1:
+                logger.info(f"[RAG Lexical] No AND results for '{content_query}', falling back to OR")
+                content_query_or = " OR ".join(words)
+                fts_query_or = f'content:({content_query_or}) AND owner:"{owner}" AND scope:"{scope}"'
+                rows = perform_query(fts_query_or)
 
             results = []
-            for row in cursor:
+            for row in rows:
                 # bm25 in sqlite fts5: smaller is better (more negative usually or close to 0?)
                 # Actually sqlite bm25 returns negative values (more negative is better) OR
                 # positive values where smaller is better?
@@ -191,5 +186,5 @@ def lexical_search(query: str, owner: str, scope: str, top_k: int = 50) -> list[
             return results
 
     except Exception as e:
-        logger.warning(f"[RAG v2 Lexical] Search failed: {e}")
+        logger.warning(f"[RAG v2 Lexical] Search failed: {e}", exc_info=True)
         return []

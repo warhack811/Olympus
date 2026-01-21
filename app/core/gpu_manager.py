@@ -25,9 +25,15 @@ class GPUManager:
     """
 
     _instance = None
-    _lock = asyncio.Lock()
+    _lock: asyncio.Lock | None = None
     _current_state = ModelState.GEMMA
     _last_activity = time.time()
+
+    @classmethod
+    def get_lock(cls) -> asyncio.Lock:
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
 
     def __new__(cls):
         if cls._instance is None:
@@ -44,7 +50,7 @@ class GPUManager:
         Chat servisi tarafından çağrılır.
         Eğer GPU Flux modundaysa, Gemma'ya geçişi zorlar.
         """
-        async with cls._lock:
+        async with cls.get_lock():
             if cls._current_state == ModelState.GEMMA:
                 cls._last_activity = time.time()
                 return
@@ -71,7 +77,7 @@ class GPUManager:
         Image servisi tarafından çağrılır.
         Gemma'yı VRAM'den atar (unload) ve Flux moduna geçer.
         """
-        async with cls._lock:
+        async with cls.get_lock():
             if cls._current_state == ModelState.FLUX:
                 return
 

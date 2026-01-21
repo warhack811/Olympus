@@ -28,7 +28,11 @@ from app.core.config_models import (
     ThemeConfig,
     UITextConfig,
 )
-from app.core.models import SQLModel
+from sqlmodel import SQLModel
+# Import ALL domain models to ensure metadata is populated
+import app.auth.models  # noqa
+import app.chat.models  # noqa
+import app.core.system_models  # noqa
 
 # Alembic Config
 config = context.config

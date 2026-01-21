@@ -58,30 +58,27 @@ class ConfigCategory(str, Enum):
     AI = "ai"  # AI davranış ayarları
     IMAGE = "image"  # Görsel üretim ayarları
     SEARCH = "search"  # Arama ayarları
-
-
-class ModelProvider(str, Enum):
-    """Model sağlayıcıları."""
-
-    GROQ = "groq"
-    OLLAMA = "ollama"
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    LOCAL = "local"
-
+    
 
 class PersonaModeType(str, Enum):
     """Persona mod tipleri."""
 
+    PROFESSIONAL = "professional"
+    FRIENDLY = "friendly"
+    KANKA = "kanka"
+    SINCERE = "sincere"
+    EXPERT = "expert"
+    TEACHER = "teacher"
+    CREATIVE = "creative"
+    GIRLFRIEND = "girlfriend"
+    
+    # Legacy / Internal Support
     STANDARD = "standard"
     RESEARCHER = "researcher"
-    FRIEND = "friend"
     ROMANTIC = "romantic"
     ARTIST = "artist"
-    WRITER = "writer"
-    ROLEPLAY = "roleplay"
-    BUSINESS = "business"
     CODER = "coder"
+    ROLEPLAY = "roleplay"
     CUSTOM = "custom"
 
 
@@ -178,7 +175,6 @@ class ModelConfig(SQLModel, table=True):
     display_name: str = Field(max_length=128)  # UI display name
 
     # Sağlayıcı Bilgileri
-    provider: str = Field(index=True, max_length=32)  # groq, ollama, openai
     model_id: str = Field(max_length=128)  # Actual model name at provider
 
     # Kullanım Amacı
@@ -231,7 +227,7 @@ class APIConfig(SQLModel, table=True):
     Sadece endpoint URL'leri, timeout'lar ve diğer ayarlar.
 
     Attributes:
-        name: API tanımlayıcı (ör: "groq", "bing_search", "forge")
+        name: API tanımlayıcı (ör: "groq", "serper", "forge")
         display_name: UI'da gösterilecek isim
         base_url: Ana endpoint URL
         is_active: Aktif mi
@@ -533,4 +529,5 @@ class UITextConfig(SQLModel, table=True):
 
     # Zaman Damgaları
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
 

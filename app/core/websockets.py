@@ -3,7 +3,7 @@ WebSocket İletişim Modülü
 =========================
 
 Bu modül, gerçek zamanlı bildirimler için WebSocket mesajlarını yönetir.
-(Eski: app/websocket_sender.py)
+(Eski: app/web socket_sender.py)
 
 Desteklenen Mesaj Tipleri:
     - image_progress: Görsel üretim ilerleme durumu
@@ -13,13 +13,30 @@ Desteklenen Mesaj Tipleri:
 """
 
 import logging
+import json
+import asyncio
+import threading
+import os
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Set
+from fastapi import WebSocket
+import redis.asyncio as redis
+from app.config import get_settings
 
+
+settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# WebSocket bağlantıları: {ws: username} mapping
-connected: dict[Any, str] = {}
+# Lightweight metrics (internal memory)
+metrics = {
+    "ws_image_event_sent_count": 0,
+    "ws_image_event_dropped_no_target_count": 0,
+    "ws_image_event_no_recipient_count": 0
+}
+metrics_lock = threading.Lock()
+
+# WebSocket bağlantıları: {ws: {user_id_str, username}} identity set mapping
+connected: dict[Any, Set[str]] = {}
 
 
 class ImageJobStatus(str, Enum):
@@ -29,6 +46,24 @@ class ImageJobStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETE = "complete"
     ERROR = "error"
+
+
+def register_connection(ws: WebSocket, user_id: Any, username: str):
+    """
+    Register WebSocket connection with an identity set for dual-target matching (ID or Name).
+    """
+    # Create a set containing both the string version of user_id and the username
+    identity_set = {str(user_id), str(username)}
+    connected[ws] = identity_set
+    logger.info(f"[WS] Registered: {username} (total: {len(connected)})")
+
+
+def unregister_connection(ws: WebSocket) -> None:
+    """WebSocket bağlantısını kaldır."""
+    if ws in connected:
+        identity_set = connected[ws]
+        logger.info(f"[WS] Unregistered: {identity_set}")
+        del connected[ws]
 
 
 async def send_image_progress(
@@ -62,20 +97,28 @@ async def send_image_progress(
     Returns:
         int: Gönderilen istemci sayısı
     """
+    # Validation
+    if not conversation_id:
+        logger.error("[WS] conversation_id is required but missing")
+        return 0
+    
+    if message_id is None:
+        logger.warning(f"[WS] message_id missing for job {job_id[:8]}")
+    
     # Payload oluştur
     payload: dict[str, Any] = {
         "type": "image_progress",
         "job_id": job_id,
-        "conversation_id": conversation_id,
+        "conversation_id": str(conversation_id),
         "status": status.value,
         "progress": min(max(progress, 0), 100),
         "queue_position": queue_position,
         "username": username,
     }
 
-    # Message ID (frontend mesaj güncelleme için)
+    # Message ID STRING olarak ekle
     if message_id is not None:
-        payload["message_id"] = message_id
+        payload["message_id"] = str(message_id)
 
     # Opsiyonel alanlar
     if prompt:
@@ -91,14 +134,8 @@ async def send_image_progress(
     if estimated_seconds is not None:
         payload["estimated_seconds"] = estimated_seconds
 
-    # Tüm bağlı kullanıcılara gönder
-    sent_count = 0
-    for ws in list(connected.keys()):
-        try:
-            await ws.send_json(payload)
-            sent_count += 1
-        except Exception as e:
-            logger.debug(f"[WS_SENDER] Failed to send: {e}")
+    # Targeted send (broadcast yerine)
+    sent_count = await send_to_user(username, payload)
 
     # Loglama
     log_msg = f"[WS_SENDER] Job {job_id[:8]} | {status.value} | {progress}%"
@@ -108,6 +145,58 @@ async def send_image_progress(
         logger.warning(f"{log_msg} → No clients connected!")
 
     return sent_count
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REDIS PUB/SUB BRIDGE (Atlas Hybrid Connectivity)
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def start_redis_bridge():
+    """
+    Subscribe to Redis channel and relay image progress to WebSocket clients.
+    """
+    try:
+        r = redis.from_url(
+            settings.get_redis_url(settings.REDIS_DB_QUEUE),
+            decode_responses=True
+        )
+        pubsub = r.pubsub()
+        channel_name = "atlas_image_status_stream"
+        
+        await pubsub.subscribe(channel_name)
+        logger.info(f"Redis bridge subscribed to: {channel_name}")
+        
+        while True:
+            try:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message and message["type"] == "message":
+                    data = json.loads(message["data"])
+                    
+                    target = data.get("username") or data.get("user_id")
+                    
+                    logger.info(f"[WS_BRIDGE] Received event: type={data.get('type')}, target={target}, job_id={data.get('job_id', 'N/A')[:8]}, status={data.get('status')}")
+                    
+                    if target:
+                        sent_count = await send_to_user(str(target), data)
+                        if sent_count == 0:
+                            logger.warning(f"[WS_BRIDGE] Target '{target}' not connected. Active connections: {len(connected)}")
+                            # Log active usernames for debugging
+                            active_users = [list(identity_set) for identity_set in connected.values()]
+                            logger.debug(f"[WS_BRIDGE] Active users: {active_users}")
+                    else:
+                        logger.warning("Event received without target username/user_id, dropping")
+                        
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[WS_BRIDGE] Error processing redis message: {e}")
+                await asyncio.sleep(2)
+                
+    except Exception as e:
+        logger.error(f"Redis bridge error: {e}", exc_info=True)
+        # Auto-retry after delay
+        await asyncio.sleep(5)
+        asyncio.create_task(start_redis_bridge())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -155,27 +244,63 @@ async def send_progress(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def send_to_user(username: str, message: dict[str, Any]) -> int:
+async def send_to_user(username_or_id: str, message: dict[str, Any]) -> int:
     """
     Belirli bir kullanıcıya WebSocket mesajı gönderir.
 
     Args:
-        username: Hedef kullanıcı adı
+        username_or_id: Hedef kullanıcı adı VEYA user_id (string)
         message: Gönderilecek JSON mesajı
 
     Returns:
         int: Gönderilen mesaj sayısı
+    
+    Note:
+        Identity set matching sayesinde hem user_id hem username ile hedefleme mümkün.
     """
     sent_count = 0
-    for ws, ws_username in list(connected.items()):
-        if ws_username == username:
+    target = str(username_or_id)
+    
+    for ws, identity_set in list(connected.items()):
+        if target in identity_set:  # Set membership check
             try:
                 await ws.send_json(message)
                 sent_count += 1
+                logger.debug(f"[WS] Sent to {target}: {message.get('type')}")
             except Exception as e:
-                logger.debug(f"[WS] Failed to send message to user: {e}")
-
+                logger.debug(f"[WS] Failed to send to {target}: {e}")
+    
+    with metrics_lock:
+        if sent_count > 0:
+            metrics["ws_image_event_sent_count"] += sent_count
+        else:
+            metrics["ws_image_event_no_recipient_count"] += 1
+            logger.warning("[WS] No recipient found for target (PII HIDDEN)")
+    
     return sent_count
+
+
+async def disconnect_user(username_or_id: str) -> int:
+    """
+    Belirli bir kullanıcının tüm açık WebSocket bağlantılarını sunucu tarafında zorla kapatır.
+    Logout veya Ban durumlarında kullanılır.
+    """
+    closed_count = 0
+    target = str(username_or_id)
+    
+    # Kopyasını alıyoruz çünkü döngü sırasında dictionary değişebilir
+    for ws, identity_set in list(connected.items()):
+        if target in identity_set:
+            try:
+                await ws.close(code=1000, reason="Logout")
+                # unregister_connection(ws) -> ws.close sonrası main.py'deki loop kırılınca zaten çağrılacak
+                closed_count += 1
+            except Exception:
+                pass
+                
+    if closed_count > 0:
+        logger.info(f"[WS] Forcefully disconnected {closed_count} sessions for {target}")
+    return closed_count
 
 
 async def send_notification(

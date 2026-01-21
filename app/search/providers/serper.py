@@ -23,10 +23,11 @@ async def serper_search_async(
     max_results: int = 5,
     client: httpx.AsyncClient | None = None,
     timeout: float = 6.0,
+    freshness: str | None = None,
 ) -> list[SerperResult]:
     """
     Serper.dev üzerinden Google araması yapar (async).
-    Basit iki denemeli retry içerir.
+    freshness: 'past day' -> 'qdr:d', 'past week' -> 'qdr:w', 'past month' -> 'qdr:m'
     """
     api_key = settings.SERPER_API_KEY
     endpoint = settings.SERPER_ENDPOINT
@@ -45,6 +46,19 @@ async def serper_search_async(
         "hl": "tr",
         "num": max_results,
     }
+    
+    # Freshness mapping
+    if freshness:
+        f_map = {
+            "past day": "qdr:d",
+            "past week": "qdr:w",
+            "past month": "qdr:m",
+            "today": "qdr:d"
+        }
+        tbs = f_map.get(freshness.lower())
+        if tbs:
+            payload["tbs"] = tbs
+            logger.info(f"[SERPER] Freshness applied: {freshness} -> {tbs}")
 
     async def _do_request(ac: httpx.AsyncClient) -> list[SerperResult]:
         resp = await ac.post(endpoint, headers=headers, json=payload, timeout=timeout)

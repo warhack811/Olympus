@@ -81,7 +81,7 @@ def _get_imports():
     from app.image.image_manager import request_image_generation
     from app.image.job_queue import job_queue
     from app.memory.conversation import append_message, load_messages
-    from app.memory.rag import search_documents
+    from app.memory.rag_service import search_documents
     from app.memory.store import add_memory, delete_memory, search_memories
     from app.services.model_router import choose_model_for_request
     from app.services.query_enhancer import enhance_query_for_search
@@ -315,13 +315,16 @@ async def build_enhanced_context(
                 summary_block = f"📋 ÖNCEKİ SOHBET ÖZETİ:\n{summary}"
                 sections.append(summary_block)
         except Exception as exc:
-            logger.error(f"[CONTEXT] Summary okunamadı: {exc}")
+            logger.error(f"[CONTEXT] Summary okunamadı: {exc}", exc_info=True)
 
     # 2. Multi-query memory search
     try:
         search_queries = await enhance_query_for_search(message, max_queries=3)
     except Exception as e:
-        logger.debug(f"[CONTEXT] Query enhancement failed, using original: {e}")
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.DEBUG:
+            logger.debug(f"[CONTEXT] Query enhancement failed, using original: {e}")
         search_queries = [message]
 
     all_memories = []
@@ -336,7 +339,7 @@ async def build_enhanced_context(
                     seen_memory_texts.add(text)
                     all_memories.append(mem)
         except Exception as exc:
-            logger.error(f"[CONTEXT] Hafıza aranamadı: {exc}")
+            logger.error(f"[CONTEXT] Hafıza aranamadı: {exc}", exc_info=True)
 
     # Importance'a göre sırala
     def get_memory_score(memory) -> float:
@@ -378,7 +381,7 @@ async def build_enhanced_context(
             preview = (text[:400] + "...") if len(text) > 400 else text
             rag_lines.append(f"- {filename}: {preview}")
     except Exception as exc:
-        logger.error(f"[CONTEXT] RAG dokümanları aranamadı: {exc}")
+        logger.error(f"[CONTEXT] RAG dokümanları aranamadı: {exc}", exc_info=True)
 
     if rag_lines:
         sections.append(_format_context_block("İLGİLİ BELGELER", rag_lines))
@@ -403,119 +406,173 @@ async def build_enhanced_context(
     return _truncate_context_text(full_context), memories_for_decider
 
 
-async def build_image_prompt(user_message: str, style_profile: dict[str, Any] | None = None) -> str:
+class ImagePromptParts:
+    def __init__(
+        self,
+        user_content: str,
+        style_tokens: list[str] | None = None,
+        presets: list[str] | None = None,
+        negative_prompt: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        self.user_content = user_content
+        self.style_tokens = style_tokens or []
+        self.presets = presets or []
+        self.negative_prompt = negative_prompt or []
+        self.metadata = metadata or {}
+
+
+def compile_prompt(parts: ImagePromptParts) -> str:
     """
-    Görsel üretimi için prompt oluşturur.
-
-    Prefix Kuralları:
-        - '!!' ile başlıyorsa: raw prompt + style guard KAPALI
-        - '!' ile başlıyorsa: raw prompt + style guard AÇIK
-        - Normal: translate/expand + style guard AÇIK
-
-    NOT: Permissions/policy (censorship, can_use_image, nsfw) bu fonksiyondan
-         ÖNCE kontrol edilir, burada değil.
-
-    FORBIDDEN TOKEN GUARD:
-        Kullanıcı istemediği sürece style tokenlar eklenmez.
-        Bkz: app/ai/prompts/image_guard.py
+    Deterministik prompt derleyici: whitespace normalize + case-insensitive dedupe + stable order.
+    Negative prompt compile’a dahil edilmez (ayrı kanal).
     """
-    # _get_imports çağrısı kaldırıldı - gereksiz unpacking hatasına sebep oluyordu
+    seq = [parts.user_content.strip()] + parts.style_tokens + parts.presets
+    cleaned = []
+    for s in seq:
+        if s and s.strip():
+            cleaned.append(s.strip())
 
-    # Decider import'u
-    # Forbidden token guard import'u
-    from app.ai.prompts.image_guard import sanitize_image_prompt
+    seen_lower: set[str] = set()
+    ordered: list[str] = []
+    for s in cleaned:
+        key = s.lower()
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        ordered.append(s)
+
+    return ", ".join(ordered)
+
+
+async def build_image_prompt(
+    user_message: str,
+    style_profile: dict[str, Any] | None = None,
+    image_settings: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Görsel üretimi için deterministik prompt + meta döndürür.
+    Dönen tuple: (prompt_text, prompt_meta)
+        prompt_meta: prompt_hash, prompt_preview, prompt_length, removed_policy_tokens, dropped_style_tokens
+    """
+    from app.ai.prompts.image_guard import sanitize_user_content, validate_style_tokens, final_check
     from app.chat.decider import call_groq_api_safe_async
+    from app.config import get_settings
+    import hashlib
 
-    # DEBUG LOG - Ünlem kontrolü için
-    logger.warning(
-        f"[DEBUG_EXCLAIM] Gelen mesaj: '{user_message}' | starts with !: {user_message.strip().startswith('!')}"
-    )
-
+    settings = get_settings()
     normalized = user_message.strip()
-    prompt: str
 
-    # Prefix kontrolü
+    if normalized.startswith("!"):
+        raw = normalized.lstrip("!").strip() or normalized.lstrip("!")
+        clean_raw, removed_policy = sanitize_user_content(raw)
+        parts = ImagePromptParts(user_content=clean_raw)
+        prompt_text = compile_prompt(parts)
+        prompt_text = final_check(prompt_text)
+        meta = {
+            "prompt_hash": hashlib.sha256(prompt_text.encode()).hexdigest(),
+            "prompt_preview": prompt_text[:80],
+            "prompt_length": len(prompt_text),
+            "removed_policy_tokens": removed_policy,
+            "dropped_style_tokens": [],
+        }
+        logger.info("[IMAGE_PROMPT] raw_prompt=True | removed_policy=%s", removed_policy)
+        return prompt_text, meta
 
-    if normalized.startswith("!!"):
-        # !! prefix: RAW + GUARD KAPALI
-        prompt = normalized[2:].strip() or normalized[2:]
-        logger.info(f"[IMAGE_PROMPT] raw_prompt=True, style_guard=False | '{user_message}' -> '{prompt}'")
-        return prompt
+    expand_enabled = getattr(settings, "ENABLE_PROMPT_EXPANSION", False)
+    system_prompt = (
+        "Translate the user's request to English. "
+        "Do NOT expand or add style/camera/quality terms unless explicitly present in user text. "
+        "Output ONLY the translated prompt."
+    )
+    if expand_enabled:
+        system_prompt = (
+            "Translate and lightly expand the user's request to English. "
+            "Do NOT invent style/camera/quality terms; only reflect user intent. "
+            "Output ONLY the prompt text."
+        )
 
-    elif normalized.startswith("!"):
-        # ! prefix: RAW + GUARD AÇIK
-        prompt = normalized[1:].strip() or normalized[1:]
-        # Style guard uygula (kullanıcının kendi yazdığı tokenlara dokunma)
-        prompt = sanitize_image_prompt(prompt, prompt)  # user_original = prompt kendisi
-        logger.info(f"[IMAGE_PROMPT] raw_prompt=True, style_guard=True | '{user_message}' -> '{prompt}'")
-        return prompt
-
-    # Normal akış: translate/expand + guard
-
-    # Groq ile zenginleştir - MİNİMAL system prompt kullan
     detail_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an image prompt translator. "
-                "Translate and expand the user's request into a visual English prompt for Flux. "
-                "Describe the scene visually in 1-2 sentences. "
-                "Output ONLY the prompt text, no explanations or prefixes."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
-    detailed, _ = await call_groq_api_safe_async(detail_messages, temperature=0.4)
-    prompt = detailed.strip() if detailed else user_message.strip()
+    detailed, _ = await call_groq_api_safe_async(detail_messages, temperature=0.2 if not expand_enabled else 0.4)
+    translated = detailed.strip() if detailed else normalized
 
-    # FORBIDDEN TOKEN GUARD: Groq'un eklediklerini temizle
-    prompt = sanitize_image_prompt(prompt, user_message)
+    clean_content, removed_policy = sanitize_user_content(translated)
 
-    # Stil ekle (sadece izin verilmişse)
+    style_tokens: list[str] = []
     if style_profile:
-        extras = []
-
-        # 1. Detay Seviyesi
         if style_profile.get("detail_level") == "long":
             detail_keywords = ["detay", "detail", "ayrıntı", "ayrinti"]
-            if any(kw in user_message.lower() for kw in detail_keywords):
-                extras.append("highly detailed")
-                extras.append("intricate details")
+            if any(kw in normalized.lower() for kw in detail_keywords):
+                style_tokens.extend(["highly detailed", "intricate details"])
 
-        # 2. Görsel Stil (Image Style)
         img_style = style_profile.get("image_style", "natural")
         if img_style == "photorealistic":
-            extras.extend(["photorealistic", "8k", "raw photo", "cinematic lighting"])
+            style_tokens.extend(["photorealistic", "raw photo", "cinematic lighting"])
         elif img_style == "anime":
-            extras.extend(["anime style", "studio ghibli style", "vibrant colors"])
+            style_tokens.extend(["anime style", "studio ghibli style", "vibrant colors"])
         elif img_style == "digital_art":
-            extras.extend(["digital art", "concept art", "trending on artstation"])
+            style_tokens.extend(["digital art", "concept art", "trending on artstation"])
         elif img_style == "oil_painting":
-            extras.extend(["oil painting", "canvas texture", "classic art style"])
+            style_tokens.extend(["oil painting", "canvas texture", "classic art style"])
         elif img_style == "3d_render":
-            extras.extend(["3d render", "unreal engine 5", "octane render"])
+            style_tokens.extend(["3d render", "unreal engine 5", "octane render"])
 
-        # 3. Işıklandırma (Lighting) - Eğer varsa
         lighting = style_profile.get("image_lighting")
         if lighting == "cinematic":
-            extras.append("dramatic cinematographic lighting")
+            style_tokens.append("dramatic cinematographic lighting")
         elif lighting == "studio":
-            extras.append("studio lighting")
+            style_tokens.append("studio lighting")
         elif lighting == "natural":
-            extras.append("soft natural lighting")
+            style_tokens.append("soft natural lighting")
 
         if style_profile.get("caution_level") == "high":
-            extras.append("balanced framing")
+            style_tokens.append("balanced framing")
 
-        if extras:
-            # Tekrarları önle
-            unique_extras = list(dict.fromkeys(extras))
-            prompt = f"{prompt}, {', '.join(unique_extras)}"
+    presets: list[str] = []
+    apply_default_style = getattr(settings, "APPLY_DEFAULT_STYLE_WHEN_UNSPECIFIED", False)
+    if image_settings:
+        style_map = {
+            "realistic": ["photorealistic", "raw photo", "cinematic lighting"],
+            "anime": ["anime style", "vibrant colors", "cel shading"],
+            "artistic": ["digital art", "concept art"],
+            "3d": ["3d render", "unreal engine 5", "octane render"],
+            "sketch": ["pencil sketch", "hand drawn", "line art"],
+            "pixel": ["pixel art", "16-bit", "retro game style", "pixelated"],
+        }
+        default_style = image_settings.get("defaultStyle", "")
+        if default_style and (apply_default_style or style_tokens):
+            presets.extend(style_map.get(default_style, []))
 
-    logger.info(f"[IMAGE_PROMPT] raw_prompt=False, style_guard=True | '{user_message}' -> '{prompt}'")
-    return prompt
+    allowed_styles, dropped_styles = validate_style_tokens(style_tokens)
+    allowed_presets, dropped_presets = validate_style_tokens(presets)
 
+    parts = ImagePromptParts(
+        user_content=clean_content,
+        style_tokens=allowed_styles,
+        presets=allowed_presets,
+        negative_prompt=[],
+    )
+    prompt_text = compile_prompt(parts)
+    prompt_text = final_check(prompt_text)
 
+    meta = {
+        "prompt_hash": hashlib.sha256(prompt_text.encode()).hexdigest(),
+        "prompt_preview": prompt_text[:80],
+        "prompt_length": len(prompt_text),
+        "removed_policy_tokens": removed_policy,
+        "dropped_style_tokens": dropped_styles + dropped_presets,
+    }
+
+    logger.info(
+        "[IMAGE_PROMPT] raw_prompt=False | expand=%s | removed_policy=%s | dropped_styles=%s",
+        expand_enabled,
+        removed_policy,
+        dropped_styles + dropped_presets,
+    )
+    return prompt_text, meta
 # =============================================================================
 # ANA İŞLEMCİ
 # =============================================================================
@@ -530,6 +587,7 @@ async def process_chat_message(
     requested_model: str | None = None,
     stream: bool = False,
     style_profile: dict[str, str] | None = None,
+    image_settings: dict[str, Any] | None = None,
 ) -> tuple[str, Any] | AsyncGenerator[str, None]:
     """
     Ana sohbet işlemcisi.
@@ -613,14 +671,14 @@ async def process_chat_message(
 
         # 3. Emoji Mapping
         # Frontend: none, low, medium, high
-        # Compiler: use_emoji = True | False | None
+        # Compiler: use_emoji = "yes" | "no" | "auto"
         emoji_lvl = style_profile.get("emoji_level", "medium")
         if emoji_lvl == "none":
-            style_profile["use_emoji"] = False
+            style_profile["use_emoji"] = "no"
         elif emoji_lvl in ["medium", "high"]:
-            style_profile["use_emoji"] = True
+            style_profile["use_emoji"] = "yes"
         else:
-            style_profile["use_emoji"] = None  # low -> nötr
+            style_profile["use_emoji"] = "auto"  # low -> auto
 
     # 1. Feature Flag Kontrolü
     if not feature_enabled("chat", True):
@@ -698,7 +756,7 @@ async def process_chat_message(
         from uuid import uuid4
 
         # 1. Prompt'u SYNC hazırla
-        prompt = await build_image_prompt(message)
+        prompt, prompt_meta = await build_image_prompt(message, style_profile=style_profile, image_settings=image_settings)
 
         # 2. JOB_ID'yi ÖNCE oluştur
         job_id = str(uuid4())
@@ -710,27 +768,33 @@ async def process_chat_message(
                 username=username,
                 conv_id=conversation_id,
                 role="bot",
-                text="[IMAGE_PENDING] Görsel isteğiniz kuyruğa alındı...",
-                extra_metadata={"type": "image", "status": "queued", "job_id": job_id, "prompt": prompt[:200]},
+                text=f"[IMAGE_QUEUED:{job_id}:0] Görsel isteğiniz kuyruğa alındı...",
+                extra_metadata={"type": "image", "status": "queued", "job_id": job_id, "prompt_hash": prompt_meta.get("prompt_hash"), "prompt_preview": prompt_meta.get("prompt_preview"), "prompt_length": prompt_meta.get("prompt_length")},
             )
             message_id = placeholder_msg.id
             logger.info(f"[IMAGE] Mesaj oluşturuldu (sync): {message_id}, job_id: {job_id[:8]}")
 
         # 4. Job'u ASYNC başlat (mesaj zaten oluşturuldu)
         async def _start_job():
+            # message_id None check - güvenlik için
+            if not message_id:
+                logger.error("[IMAGE] message_id None, job başlatılamıyor", exc_info=False)  # Not an exception, just validation error
+                return
+                
             try:
-                result_job_id = request_image_generation(
+                result_job_id = await request_image_generation(
                     username=username,
                     prompt=prompt,
-                    message_id=message_id,
+                    message_id=message_id or 0,
                     job_id=job_id,
                     conversation_id=conversation_id,
                     user=user,
+                    image_settings=image_settings,
                 )
                 if result_job_id:
                     logger.info(f"[IMAGE] Job başlatıldı: {result_job_id} -> mesaj: {message_id}")
             except Exception as e:
-                logger.error(f"[IMAGE] Job başlatma hatası: {e}")
+                logger.error(f"[IMAGE] Job başlatma hatası: {e}", exc_info=True)
                 if message_id:
                     from app.memory.conversation import update_message
 
@@ -815,7 +879,10 @@ async def process_chat_message(
         toggles={"web": user_can_use_internet(user), "image": user_can_use_image(user)},
         style_profile=style_profile,
     )
-    logger.debug(f"[PROCESSOR] System prompt compiled. Length: {len(compiled_system_prompt)}")
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.DEBUG:
+        logger.debug(f"[PROCESSOR] System prompt compiled. Length: {len(compiled_system_prompt)}")
 
     raw_history = build_history_budget(username, conversation_id, token_budget=HISTORY_TOKEN_BUDGET_GROQ)
     if (
@@ -862,7 +929,7 @@ async def process_chat_message(
                             extra_metadata={"model": "groq-stream", "stream": True},
                         )
                     except Exception as e:
-                        logger.error(f"[STREAM] Failed to save bot message: {e}")
+                        logger.error(f"[STREAM] Failed to save bot message: {e}", exc_info=True)
 
                 # Streaming memory deduplication kontrolü
                 import hashlib
@@ -888,9 +955,12 @@ async def process_chat_message(
 
                         await streaming_memory_manager.mark_completed(message_id)
                     except Exception as e:
-                        logger.error(f"[ROUTER] Hafıza kayıt hatası: {e}")
+                        logger.error(f"[ROUTER] Hafıza kayıt hatası: {e}", exc_info=True)
                 else:
-                    logger.debug(f"[ROUTER] Memory already processed for message_id: {message_id}")
+                    from app.config import get_settings
+                    settings = get_settings()
+                    if settings.DEBUG:
+                        logger.debug(f"[ROUTER] Memory already processed for message_id: {message_id}")
 
                 if conversation_id:
                     try:
@@ -925,7 +995,7 @@ async def process_chat_message(
                 extra_metadata={"model": "groq-standard", "stream": False},
             )
         except Exception as e:
-            logger.error(f"[PROCESSOR] Failed to save bot message: {e}")
+            logger.error(f"[PROCESSOR] Failed to save bot message: {e}", exc_info=True)
 
     try:
         decision_mem = await decide_memory_storage_async(message, final_answer, existing_memories=relevant_memories)
@@ -936,7 +1006,7 @@ async def process_chat_message(
         if decision_mem.get("store") and decision_mem.get("memory"):
             await add_memory(username, decision_mem["memory"], importance=decision_mem.get("importance", 0.5))
     except Exception as e:
-        logger.error(f"[ROUTER] Hafıza kayıt hatası: {e}")
+        logger.error(f"[ROUTER] Hafıza kayıt hatası: {e}", exc_info=True)
 
     # Özet tetikleme
     if conversation_id:
@@ -946,6 +1016,14 @@ async def process_chat_message(
                 if summary_coro:
                     asyncio.create_task(summary_coro)
         except Exception as e:
-            logger.debug(f"[ROUTER] Summary check/generate failed: {e}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[ROUTER] Summary check/generate failed: {e}")
 
     return f"[GROQ] {final_answer}", semantic
+
+
+
+
+

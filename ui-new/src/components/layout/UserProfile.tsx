@@ -67,7 +67,7 @@ export function UserProfile({ onLogout, onExportOpen, onSettingsOpen, onItemSele
     }
 
     return (
-        <div className="relative mt-auto pt-2 border-t border-(--color-border)">
+        <div className="relative mt-auto">
             <AnimatePresence>
                 {isOpen && (
                     <motion.div

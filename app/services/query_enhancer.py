@@ -47,6 +47,8 @@ async def enhance_query_for_search(
     Returns:
         List of search queries (orijinal mesaj dahil)
     """
+    from app.core.llm.governance import governance
+    
     # Orijinal mesajı her zaman dahil et
     queries = [user_message.strip()]
 
@@ -60,8 +62,9 @@ async def enhance_query_for_search(
             {"role": "user", "content": user_message},
         ]
 
-        # Hızlı model kullan
-        fast_model = getattr(settings, "GROQ_FAST_MODEL", settings.GROQ_DECIDER_MODEL)
+        # Governance'dan hızlı model zincirini al
+        chain = governance.get_model_chain("fast")
+        fast_model = chain[0] if chain else "llama-3.1-8b-instant"
 
         import json
 
@@ -100,37 +103,3 @@ async def enhance_query_for_search(
         logger.warning(f"[QUERY_ENHANCE] Hata (fallback to original): {e}")
 
     return queries
-
-
-async def search_with_enhanced_queries(
-    search_func,
-    queries: list[str],
-    **search_kwargs,
-) -> list:
-    """
-    Birden fazla sorgu ile arama yapar ve sonuçları birleştirir.
-
-    Args:
-        search_func: Async search function to call
-        queries: List of search queries
-        **search_kwargs: Additional arguments for search function
-
-    Returns:
-        Deduplicated list of results
-    """
-    all_results = []
-    seen_ids = set()
-
-    for query in queries:
-        try:
-            results = await search_func(query=query, **search_kwargs)
-            for item in results:
-                item_id = getattr(item, "id", None) or getattr(item, "text", "")[:50]
-                if item_id not in seen_ids:
-                    seen_ids.add(item_id)
-                    all_results.append(item)
-        except Exception as e:
-            logger.warning(f"[QUERY_ENHANCE] Search error for '{query}': {e}")
-            continue
-
-    return all_results

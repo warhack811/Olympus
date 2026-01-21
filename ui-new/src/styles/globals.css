@@ -102,13 +102,13 @@
   --header-height: 60px;
   --input-area-height: auto;
   --input-area-height: auto;
-  --message-max-width: 95%;
-  --chat-max-width: 900px;
+  --message-max-width: 100%;
+  --chat-max-width: 1200px;
 }
 
 @media (min-width: 768px) {
   :root {
-    --message-max-width: 85%;
+    --message-max-width: 1000px;
   }
 }
 
@@ -222,8 +222,21 @@
   --color-bg-surface-hover: #171717;
   --color-bg-elevated: #0f0f0f;
   --color-border: #171717;
+  --color-primary: #7c3aed;
+  --color-primary-hover: #6d28d9;
+  --color-secondary: #ec4899;
+  --color-accent: #f59e0b;
+  --gradient-brand: linear-gradient(135deg, #7c3aed 0%, #ec4899 50%, #f59e0b 100%);
+  --glass-bg: rgba(10, 10, 10, 0.7);
   --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.6);
+
+  --color-code-bg: #000000;
+  --color-code-surface: #0a0a0a;
+  --color-code-border: #1a1a1a;
+  --color-code-text: #d4d4d4;
+  --color-code-comment: #6a9955;
+
   --color-msg-user: rgba(124, 58, 237, 0.25);
   --color-msg-user-border: rgba(124, 58, 237, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -243,6 +256,14 @@
   --color-text: #f1f5f9;
   --color-text-secondary: #94a3b8;
   --gradient-brand: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+  --glass-bg: rgba(26, 39, 68, 0.7);
+
+  --color-code-bg: #1a2744;
+  --color-code-surface: #1e3050;
+  --color-code-border: #243456;
+  --color-code-text: #f1f5f9;
+  --color-code-comment: #94a3b8;
+
   --color-msg-user: rgba(59, 130, 246, 0.25);
   --color-msg-user-border: rgba(59, 130, 246, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -262,6 +283,14 @@
   --color-text: #ecfdf5;
   --color-text-secondary: #6ee7b7;
   --gradient-brand: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+  --glass-bg: rgba(19, 36, 24, 0.7);
+
+  --color-code-bg: #132418;
+  --color-code-surface: #183020;
+  --color-code-border: #1c3624;
+  --color-code-text: #ecfdf5;
+  --color-code-comment: #6ee7b7;
+
   --color-msg-user: rgba(16, 185, 129, 0.25);
   --color-msg-user-border: rgba(16, 185, 129, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -281,6 +310,14 @@
   --color-text: #fef2f2;
   --color-text-secondary: #fca5a5;
   --gradient-brand: linear-gradient(135deg, #f43f5e 0%, #fb7185 100%);
+  --glass-bg: rgba(45, 34, 38, 0.7);
+
+  --color-code-bg: #2d2226;
+  --color-code-surface: #352a2e;
+  --color-code-border: #3d2f34;
+  --color-code-text: #fef2f2;
+  --color-code-comment: #fca5a5;
+
   --color-msg-user: rgba(244, 63, 94, 0.25);
   --color-msg-user-border: rgba(244, 63, 94, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -300,6 +337,14 @@
   --color-text: #f8f8f2;
   --color-text-secondary: #94a3b8;
   --gradient-brand: linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%);
+  --glass-bg: rgba(68, 71, 90, 0.7);
+
+  --color-code-bg: #44475a;
+  --color-code-surface: #383a4a;
+  --color-code-border: #6272a4;
+  --color-code-text: #f8f8f2;
+  --color-code-comment: #6272a4;
+
   --color-msg-user: rgba(189, 147, 249, 0.25);
   --color-msg-user-border: rgba(189, 147, 249, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -319,6 +364,14 @@
   --color-text: #eceff4;
   --color-text-secondary: #d8dee9;
   --gradient-brand: linear-gradient(135deg, #88c0d0 0%, #81a1c1 100%);
+  --glass-bg: rgba(59, 66, 82, 0.7);
+
+  --color-code-bg: #3b4252;
+  --color-code-surface: #3f4758;
+  --color-code-border: #4c566a;
+  --color-code-text: #eceff4;
+  --color-code-comment: #d8dee9;
+
   --color-msg-user: rgba(136, 192, 208, 0.25);
   --color-msg-user-border: rgba(136, 192, 208, 0.4);
   --color-msg-user-text: var(--color-text);
@@ -338,6 +391,10 @@
   --color-border: #e5e5e5;
   --color-border-hover: #d4d4d4;
   --color-primary: #7c3aed;
+  --color-primary-hover: #6d28d9;
+  --color-secondary: #ec4899;
+  --color-accent: #f59e0b;
+  --gradient-brand: linear-gradient(135deg, #7c3aed 0%, #ec4899 50%, #f59e0b 100%);
   --color-msg-user: rgba(124, 58, 237, 0.08);
   --color-msg-user-border: rgba(124, 58, 237, 0.15);
   --color-msg-user-text: var(--color-text);
@@ -347,7 +404,6 @@
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08);
   --glass-bg: rgba(255, 255, 255, 0.8);
   --scrollbar-thumb: #d4d4d4;
-
 
   --color-code-bg: #f8f8f8;
   --color-code-surface: #f0f0f0;
@@ -376,7 +432,14 @@
   --color-secondary: #c2410c;
   --color-accent: #15803d;
   --gradient-brand: linear-gradient(135deg, #b45309 0%, #c2410c 100%);
-  --glass-bg: rgba(254, 252, 243, 0.9);
+  --glass-bg: rgba(250, 245, 230, 0.7);
+
+  --color-code-bg: #faf5e6;
+  --color-code-surface: #fcf8ee;
+  --color-code-border: #f5edd6;
+  --color-code-text: #1c1917;
+  --color-code-comment: #78716c;
+
   --color-msg-user: rgba(180, 83, 9, 0.08);
   --color-msg-user-border: rgba(180, 83, 9, 0.15);
   --color-msg-user-text: var(--color-text);
@@ -400,6 +463,14 @@
   --color-secondary: #0891b2;
   --color-accent: #7c3aed;
   --gradient-brand: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+  --glass-bg: rgba(204, 251, 241, 0.7);
+
+  --color-code-bg: #ccfbf1;
+  --color-code-surface: #e0fdf7;
+  --color-code-border: #99f6e4;
+  --color-code-text: #134e4a;
+  --color-code-comment: #0d9488;
+
   --color-msg-user: rgba(13, 148, 136, 0.08);
   --color-msg-user-border: rgba(13, 148, 136, 0.15);
   --color-msg-user-text: var(--color-text);
@@ -421,6 +492,14 @@
   --color-secondary: #c026d3;
   --color-accent: #f472b6;
   --gradient-brand: linear-gradient(135deg, #9333ea 0%, #c026d3 100%);
+  --glass-bg: rgba(243, 232, 255, 0.7);
+
+  --color-code-bg: #f3e8ff;
+  --color-code-surface: #f6edff;
+  --color-code-border: #e9d5ff;
+  --color-code-text: #3b0764;
+  --color-code-comment: #7e22ce;
+
   --color-msg-user: rgba(147, 51, 234, 0.08);
   --color-msg-user-border: rgba(147, 51, 234, 0.15);
   --color-msg-user-text: var(--color-text);
@@ -439,6 +518,14 @@
   --color-secondary: #00ffff;
   --color-accent: #ff00ff;
   --gradient-brand: linear-gradient(135deg, #ffff00 0%, #00ffff 100%);
+  --glass-bg: rgba(26, 26, 26, 0.7);
+
+  --color-code-bg: #1a1a1a;
+  --color-code-surface: #0d0d0d;
+  --color-code-border: #ffffff;
+  --color-code-text: #ffffff;
+  --color-code-comment: #cccccc;
+
   --color-msg-user: #ffff00;
   --color-msg-user-border: #ffffff;
   --color-msg-user-text: #000000;
@@ -530,6 +617,21 @@ pre {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   MESSAGE CONTENT - Typography Plugin Configuration
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Override typography plugin with 16px base (Claude/ChatGPT standard) */
+.prose {
+  font-size: 16px !important;
+  max-width: none !important;
+}
+
+.prose p {
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    6. SCROLLBAR STYLING
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -608,6 +710,17 @@ pre {
 
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
+}
+
+@media (max-width: 768px) {
+  .no-scrollbar-mobile {
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
+  }
+
+  .no-scrollbar-mobile::-webkit-scrollbar {
+    display: none !important;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

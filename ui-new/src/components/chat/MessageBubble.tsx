@@ -20,12 +20,13 @@ import { ReplyPreview } from './ReplyPreview'
 import { ContextPanel } from './ContextPanel'
 import { ImageProgressCard } from './ImageProgressCard'
 import { ImageCompletedCard } from './ImageCompletedCard'
+import { ReasoningLog } from './ReasoningLog'
 import { renderMarkdown, setupCodeCopyButtons } from '@/lib/markdownRenderer'
 import { cn, formatTime, copyToClipboard, decodeHtmlEntities } from '@/lib/utils'
-import { useChatStore, useUserStore } from '@/stores'
+import { useChatStore, useUserStore, useSettingsStore } from '@/stores'
 import { useImageProgress } from '@/hooks/useImageProgress'
 import { useMermaidDiagrams } from '@/hooks/useMermaidDiagrams'
-import { chatApi } from '@/api'
+import { chatApi, normalizeImageUrl } from '@/api/client'
 import mermaid from 'mermaid'
 // @ts-ignore
 import renderMathInElement from 'katex/dist/contrib/auto-render'
@@ -56,7 +57,13 @@ interface MessageBubbleProps {
  * Check if message is an image pending message
  * Backend sometimes strips [IMAGE_PENDING] tag, so we also check for the text
  */
-function isImagePendingMessage(content: string): boolean {
+function isImagePendingMessage(message: Message): boolean {
+    const meta = message.extra_metadata
+    if (meta?.type === 'image' && (meta.status === 'queued' || meta.status === 'processing')) {
+        return true
+    }
+    // Fallback logic
+    const content = message.content
     return content.includes('[IMAGE_PENDING]') ||
         content.includes('Görsel isteğiniz kuyruğa alındı')
 }
@@ -64,8 +71,13 @@ function isImagePendingMessage(content: string): boolean {
 /**
  * Check if message contains a completed image
  */
-function isImageCompletedMessage(content: string): boolean {
-    return content.includes('IMAGE_PATH:')
+function isImageCompletedMessage(message: Message): boolean {
+    const meta = message.extra_metadata
+    if (meta?.type === 'image' && (meta.status === 'complete' || !!meta.image_url)) {
+        return true
+    }
+    // Fallback logic
+    return message.content.includes('IMAGE_PATH:')
 }
 
 /**
@@ -135,10 +147,34 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
         src?: string;
         alt?: string;
     }>({ isOpen: false, mode: 'mermaid' })
+    const userImages = useMemo(() => {
+        if (!isUser || !message.images || message.images.length === 0) return []
+        return message.images.map(img => normalizeImageUrl(img.url))
+    }, [isUser, message.images])
+
+    // Get feature flag for metadata-first rendering
+    const isMetadataFirst = useSettingsStore((state: any) => state.featureFlags?.FE_METADATA_FIRST_IMAGE_RENDER ?? true)
 
     // Detect message type
-    const isPending = isImagePendingMessage(message.content)
-    const isCompleted = isImageCompletedMessage(message.content)
+    const isPending = useMemo(() => {
+        // 1. Primary: Metadata-first check
+        if (isMetadataFirst && message.extra_metadata?.type === 'image') {
+            const status = message.extra_metadata.status
+            return status === 'queued' || status === 'processing'
+        }
+        // 2. Secondary: Fallback to legacy marker parsing
+        return isImagePendingMessage(message)
+    }, [isMetadataFirst, message])
+
+    const isCompleted = useMemo(() => {
+        // 1. Primary: Metadata-first check
+        if (isMetadataFirst && message.extra_metadata?.type === 'image') {
+            return message.extra_metadata.status === 'complete' || !!message.extra_metadata.image_url
+        }
+        // 2. Secondary: Fallback to legacy marker parsing
+        return isImageCompletedMessage(message)
+    }, [isMetadataFirst, message])
+
     const isImageMessage = isPending || isCompleted
 
     // Get job_id from message metadata
@@ -146,6 +182,44 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
 
     // Get progress from WebSocket cache (if available)
     const progressData = useImageProgress(jobId)
+
+    // POLLING FALLBACK: If WebSocket fails, poll the status every 5 seconds
+    useEffect(() => {
+        if (!isPending || !jobId || isCompleted) return
+
+        const pollInterval = setInterval(async () => {
+            try {
+                const status = await chatApi.getJobStatus(jobId)
+                if (status.status !== 'unknown') {
+                    const currentStatus = message.extra_metadata?.status
+                    if (status.status !== currentStatus || status.progress > ((message.extra_metadata?.progress as number) || 0) + 5) {
+                        updateMessage(message.id, {
+                            extra_metadata: {
+                                ...message.extra_metadata,
+                                status: status.status as any,
+                                progress: status.progress,
+                                queue_position: status.queue_position,
+                                image_url: status.image_url,
+                                error: status.error
+                            }
+                        })
+                        if (status.status === 'complete' || status.status === 'error') {
+                            // Stop polling when job is complete or errored
+                            clearInterval(pollInterval)
+                        }
+                    }
+                }
+            } catch (err) {
+                // Log polling errors but continue polling
+                console.warn('[MessageBubble] Polling error:', err)
+            }
+        }, 5000)
+
+        // CRITICAL: Cleanup interval on unmount to prevent memory leak
+        return () => {
+            clearInterval(pollInterval)
+        }
+    }, [isPending, jobId, isCompleted, message.id, message.extra_metadata, updateMessage])
 
     // Get replied message if exists
     const repliedMessage = useMemo(() => {
@@ -157,18 +231,14 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
     const currentJob = useMemo((): ImageJob | null => {
         if (!isPending) return null
 
-        // Read status directly from extra_metadata (updated by WebSocket handler)
-        const metaStatus = message.extra_metadata?.status as 'queued' | 'processing' | 'complete' | 'error' | undefined
-        const metaProgress = message.extra_metadata?.progress as number | undefined
-        const metaQueuePos = message.extra_metadata?.queue_position as number | undefined
-
+        const meta = message.extra_metadata
         return {
             id: jobId || `fallback-${message.id}`,
             conversationId: currentConversationId || undefined,
-            prompt: (message.extra_metadata?.prompt as string) || extractImagePrompt(message.content) || 'Görsel oluşturuluyor...',
-            status: metaStatus || 'queued',
-            progress: metaProgress ?? 0,
-            queuePosition: metaQueuePos || 1,
+            prompt: (meta?.prompt as string) || extractImagePrompt(message.content) || 'Görsel oluşturuluyor...',
+            status: (meta?.status as any) || 'queued',
+            progress: (meta?.progress as number) ?? 0,
+            queuePosition: (meta?.queue_position as number) || 1,
         }
     }, [isPending, jobId, message.id, message.extra_metadata, message.content, currentConversationId])
 
@@ -176,11 +246,13 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
     const imageData = useMemo(() => {
         if (!isCompleted) return null
 
-        const imageUrl = extractImageUrl(message.content)
-        const prompt = extractImagePrompt(message.content)
+        const meta = message.extra_metadata
+        const rawUrl = meta?.image_url || extractImageUrl(message.content)
+        const imageUrl = normalizeImageUrl(rawUrl as string)
+        const prompt = (meta?.prompt as string) || extractImagePrompt(message.content)
 
         return { imageUrl, prompt }
-    }, [isCompleted, message.content])
+    }, [isCompleted, message.content, message.extra_metadata])
 
     // Get clean content (for non-image or partial messages)
     const cleanContent = useMemo(() => {
@@ -189,9 +261,10 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
 
     // Parse markdown for assistant messages
     const htmlContent = useMemo(() => {
-        if (isUser || !cleanContent || isImageMessage) return cleanContent
+        // FIXED: Removed isImageMessage check - AI text should show WITH image card
+        if (isUser || !cleanContent) return cleanContent
         return renderMarkdown(cleanContent)
-    }, [cleanContent, isUser, isImageMessage])
+    }, [cleanContent, isUser])
 
     // Setup code copy buttons after render
 
@@ -290,65 +363,11 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
     // ─────────────────────────────────────────────────────────────────────────
     // RENDER: Image Pending (Progress)
     // ─────────────────────────────────────────────────────────────────────────
-    if (isPending && currentJob) {
-        return (
-            <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="group flex gap-3 px-4 py-3 flex-row"
-            >
-                {/* Avatar */}
-                <Avatar
-                    size="md"
-                    fallback={<Sparkles className="h-4 w-4" />}
-                    className="shrink-0 mt-1"
-                />
-
-                {/* Progress Card */}
-                <div className="max-w-(--message-max-width)">
-                    <ImageProgressCard
-                        job={currentJob}
-                        onCancel={handleCancelImage}
-                    />
-                </div>
-            </motion.div>
-        )
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
-    // RENDER: Image Completed
+    // RENDER: Standard Message (Text + Optional Image Cards)
     // ─────────────────────────────────────────────────────────────────────────
-    if (isCompleted && imageData?.imageUrl) {
-        return (
-            <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="group flex gap-3 px-4 py-3 flex-row"
-            >
-                {/* Avatar */}
-                <Avatar
-                    size="md"
-                    fallback={<Sparkles className="h-4 w-4" />}
-                    className="shrink-0 mt-1"
-                />
-
-                {/* Completed Image Card */}
-                <div className="flex flex-col gap-1 max-w-(--message-max-width)">
-                    <ImageCompletedCard
-                        imageUrl={imageData.imageUrl}
-                        prompt={imageData.prompt}
-                        onRegenerate={handleRegenerateImage}
-                        onOpenLightbox={handleOpenLightbox}
-                    />
-
-                    {/* Timestamp */}
-                    <span className="text-xs text-(--color-text-muted) px-1">
-                        {formatTime(message.timestamp)}
-                    </span>
-                </div>
-            </motion.div>
-        )
-    }
+    // We no longer return early for isPending/isCompleted.
+    // Instead, we render them as attachments inside the message bubble or below it.
 
     // ─────────────────────────────────────────────────────────────────────────
     // RENDER: Standard Message
@@ -358,7 +377,7 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className={cn(
-                "group flex gap-3 px-4 py-3",
+                "group flex gap-1.5 md:gap-3 px-2 md:px-4 py-3",
                 isUser ? "flex-row-reverse" : "flex-row"
             )}
             onMouseEnter={() => setIsHovered(true)}
@@ -373,7 +392,7 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
                 ) : (
                     <Sparkles className="h-4 w-4" />
                 )}
-                className="shrink-0 mt-1"
+                className="shrink-0 mt-1 hidden md:flex"
             />
 
             {/* Content */}
@@ -408,14 +427,49 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
                         "text-(--color-msg-user-text)"
                     ] : [
                         "rounded-tl-sm",
-                        "bg-(--color-msg-bot) border border-(--color-msg-bot-border)",
-                        "text-(--color-msg-bot-text)"
+                        "text-(--color-text)"
                     ]
                 )}>
+                    {/* Reasoning Log (Glass Box) */}
+                    {!isUser && message.reasoning_log && message.reasoning_log.length > 0 && (
+                        <div className="mb-3 border-b border-[var(--color-border)]/50 pb-1">
+                            <ReasoningLog steps={message.reasoning_log} isStreaming={message.isStreaming} />
+                        </div>
+                    )}
+
                     {/* Content */}
-                    {isUser ? (
-                        <p className="text-base leading-relaxed whitespace-pre-wrap">{cleanContent}</p>
-                    ) : message.isStreaming && !cleanContent ? (
+                    <div className="prose dark:prose-invert max-w-none break-words">
+                        <MarkdownDisplay
+                            content={htmlContent}
+                            isStreaming={message.isStreaming ?? false}
+                            onOpenLightbox={handleOpenLightbox}
+                            onOpenMermaidViewer={handleOpenMermaidViewer}
+                        />
+                    </div>
+
+                    {/* ATTACHMENT: Image Progress Card */}
+                    {isPending && currentJob && (
+                        <div className="mt-3">
+                            <ImageProgressCard
+                                job={currentJob}
+                                onCancel={handleCancelImage}
+                            />
+                        </div>
+                    )}
+
+                    {/* ATTACHMENT: Image Completed Card */}
+                    {isCompleted && imageData?.imageUrl && (
+                        <div className="mt-3">
+                            <ImageCompletedCard
+                                imageUrl={imageData.imageUrl}
+                                prompt={imageData.prompt}
+                                onRegenerate={handleRegenerateImage}
+                                onOpenLightbox={handleOpenLightbox}
+                            />
+                        </div>
+                    )}
+                    {/* Messaging Status - Typing Indicator */}
+                    {!isUser && message.isStreaming && !cleanContent && (
                         /* Typing Indicator - when streaming but no content yet */
                         <div className="flex items-center gap-2">
                             <span className="text-sm text-(--color-text-muted)">
@@ -440,36 +494,55 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
                                 ))}
                             </div>
                         </div>
-                    ) : (
-                        <>
-                            <MarkdownDisplay
-                                content={htmlContent}
-                                onOpenLightbox={handleOpenLightbox}
-                                onOpenMermaidViewer={handleOpenMermaidViewer}
-                            />
+                    )}
 
-                            {/* Streaming Cursor */}
-                            {message.isStreaming && (
-                                <span className="inline-block w-0.75 h-[1.2em] bg-(--color-primary) rounded-sm ml-1 animate-pulse" />
-                            )}
-                        </>
+                    {/* Streaming Cursor */}
+                    {message.isStreaming && (
+                        <span className="inline-block w-0.75 h-[1.2em] bg-(--color-primary) rounded-sm ml-1 animate-pulse" />
+                    )}
+
+                    {/* User Images Display (Vision) */}
+                    {isUser && userImages.length > 0 && (
+                        <div className={cn(
+                            "grid gap-2 mt-3",
+                            userImages.length === 1 ? "grid-cols-1" : "grid-cols-2"
+                        )}>
+                            {userImages.map((url, idx) => (
+                                <motion.div
+                                    key={idx}
+                                    layoutId={`user-img-${message.id}-${idx}`}
+                                    className="relative group cursor-zoom-in overflow-hidden rounded-xl border border-white/10"
+                                    onClick={() => onOpenLightbox?.(url)}
+                                >
+                                    <img
+                                        src={url}
+                                        alt={`Attached image ${idx + 1}`}
+                                        className="w-full h-auto max-h-[300px] object-cover transition-transform duration-300 group-hover:scale-105"
+                                    />
+                                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                        <Sparkles className="w-6 h-6 text-white" />
+                                    </div>
+                                </motion.div>
+                            ))}
+                        </div>
                     )}
 
 
+                    {/* Context Panel - Unified Sources (INSIDE BUBBLE) */}
+                    {!isUser && message.unified_sources && message.unified_sources.length > 0 && (
+                        <ContextPanel
+                            sources={message.unified_sources}
+                            className="mt-3 border-t border-[var(--color-border)] pt-2"
+                        />
+                    )}
+
                 </div>
 
-                {/* Context Panel - Sources for assistant messages */}
-                {!isUser && message.sources && message.sources.length > 0 && (
-                    <ContextPanel
-                        sources={message.sources.map(s => ({
-                            title: s.title,
-                            url: s.url,
-                            snippet: s.snippet,
-                            favicon: s.favicon
-                        }))}
-                        className="mt-2"
-                    />
-                )}
+                {/* Context Panel - Unified Sources */}
+
+
+
+
 
                 {/* Footer: Timestamp & Reactions & Actions */}
                 <div className={cn(
@@ -562,17 +635,19 @@ export function MessageBubble({ message, onReply, onOpenLightbox }: MessageBubbl
 
 const MarkdownDisplay = memo(({
     content,
+    isStreaming,
     onOpenLightbox,
     onOpenMermaidViewer
 }: {
     content: string,
+    isStreaming: boolean,
     onOpenLightbox: (url: string) => void,
     onOpenMermaidViewer: (svg: SVGSVGElement, code: string) => void
 }) => {
     const ref = useRef<HTMLDivElement>(null)
 
     // Mermaid diagrams hook
-    useMermaidDiagrams(ref, content, onOpenLightbox, onOpenMermaidViewer)
+    useMermaidDiagrams(ref, content, isStreaming, onOpenLightbox, onOpenMermaidViewer)
 
     useEffect(() => {
         const container = ref.current
@@ -583,34 +658,26 @@ const MarkdownDisplay = memo(({
 
         // 2. Render KaTeX
         try {
-            // @ts-ignore
-            if (window.renderMathInElement) {
-                // @ts-ignore
-                window.renderMathInElement(container, {
-                    delimiters: [
-                        { left: '$$', right: '$$', display: true },
-                        { left: '$', right: '$', display: false },
-                        { left: '\\(', right: '\\)', display: true },
-                        { left: '\\[', right: '\\]', display: true }
-                    ],
-                    throwOnError: false
-                })
-            } else {
-                // Try imported one
-                renderMathInElement(container, {
-                    delimiters: [
-                        { left: '$$', right: '$$', display: true },
-                        { left: '$', right: '$', display: false },
-                        { left: '\\(', right: '\\)', display: true },
-                        { left: '\\[', right: '\\]', display: true }
-                    ],
-                    throwOnError: false
-                })
+            const mathOptions = {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\[', right: '\\]', display: true },
+                    { left: '\\(', right: '\\)', display: false }
+                ],
+                throwOnError: false
+            }
+
+            // Prio imported function
+            if (typeof renderMathInElement === 'function') {
+                renderMathInElement(container, mathOptions)
+            } else if (window && (window as any).renderMathInElement) {
+                (window as any).renderMathInElement(container, mathOptions)
             }
         } catch (e) {
             console.error('KaTeX error:', e)
         }
-    }, [content])
+    }, [content, isStreaming])
 
     return (
         <div

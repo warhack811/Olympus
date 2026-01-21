@@ -26,10 +26,14 @@ class StreamingMemoryManager:
         self._processing: dict[str, datetime] = {}
         self._completed: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
-        self._lock = asyncio.Lock()
-
-        # Cleanup task
+        self._lock: asyncio.Lock | None = None
         self._cleanup_task: asyncio.Task | None = None
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def _cleanup_old_entries(self):
         """Eski entry'leri temizler (5 dakikadan eski)."""
@@ -37,7 +41,7 @@ class StreamingMemoryManager:
             try:
                 await asyncio.sleep(60)  # Her dakika kontrol et
 
-                async with self._lock:
+                async with self.lock:
                     now = datetime.utcnow()
                     timeout = timedelta(minutes=5)
 
@@ -73,7 +77,7 @@ class StreamingMemoryManager:
         Returns:
             bool: İşlenebilir ise True
         """
-        async with self._lock:
+        async with self.lock:
             # Zaten tamamlanmış mı?
             if message_id in self._completed:
                 logger.debug(f"[STREAM_MEMORY] Already completed: {message_id}")
@@ -100,7 +104,7 @@ class StreamingMemoryManager:
         Args:
             message_id: Mesaj ID
         """
-        async with self._lock:
+        async with self.lock:
             if message_id in self._processing:
                 del self._processing[message_id]
 
@@ -122,7 +126,7 @@ class StreamingMemoryManager:
         Returns:
             asyncio.Lock: Lock nesnesi
         """
-        async with self._lock:
+        async with self.lock:
             if message_id not in self._locks:
                 self._locks[message_id] = asyncio.Lock()
             return self._locks[message_id]

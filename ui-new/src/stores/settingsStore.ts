@@ -16,13 +16,15 @@ import { persist } from 'zustand/middleware'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PersonaMode =
+    | 'professional'
+    | 'friendly'
+    | 'kanka'
+    | 'sincere'
+    | 'creative'
+    | 'expert'
+    | 'teacher'
+    | 'girlfriend'
     | 'standard'
-    | 'friend'
-    | 'romantic'
-    | 'researcher'
-    | 'artist'
-    | 'coder'
-    | 'roleplay'
 
 export type ResponseTone = 'formal' | 'casual' | 'playful' | 'professional'
 export type ResponseLength = 'short' | 'normal' | 'detailed'
@@ -86,6 +88,9 @@ interface SettingsState {
 
     // Future Plans (local, synced to backend on add)
     futurePlans: FuturePlan[]
+    featureFlags: {
+        FE_METADATA_FIRST_IMAGE_RENDER: boolean
+    }
 
     // UI State
     settingsOpen: boolean
@@ -110,13 +115,15 @@ interface SettingsState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PERSONAS: Persona[] = [
-    { name: 'standard', displayName: 'Standart', icon: '⚡', description: 'Dengeli ve yardımcı' },
-    { name: 'friend', displayName: 'Kanka', icon: '😊', description: 'Samimi ve arkadaş canlısı' },
-    { name: 'romantic', displayName: 'Sevgili', icon: '💕', description: 'Sıcak ve sevecen' },
-    { name: 'researcher', displayName: 'Araştırmacı', icon: '🔬', description: 'Analitik ve detaylı' },
-    { name: 'artist', displayName: 'Sanatçı', icon: '🎨', description: 'Yaratıcı ve ilham verici' },
-    { name: 'coder', displayName: 'Yazılımcı', icon: '💻', description: 'Teknik ve kod odaklı' },
-    { name: 'roleplay', displayName: 'Roleplay', icon: '🎭', description: 'Karakter canlandırma' },
+    { name: 'standard', displayName: 'Standart', icon: '🤖', description: 'Dengeli ve zeki' },
+    { name: 'professional', displayName: 'Profesyonel', icon: '👔', description: 'Kurumsal ve ciddi' },
+    { name: 'friendly', displayName: 'Arkadaşça', icon: '🤝', description: 'Nazik ve yardımcı' },
+    { name: 'kanka', displayName: 'Kanka', icon: '😊', description: 'Samimi ve eğlenceli' },
+    { name: 'sincere', displayName: 'İçten', icon: '🤝', description: 'Duygusal ve dürüst' },
+    { name: 'expert', displayName: 'Uzman', icon: '🔬', description: 'Teknik ve detaycı' },
+    { name: 'teacher', displayName: 'Öğretmen', icon: '📚', description: 'Sabırlı ve açıklayıcı' },
+    { name: 'creative', displayName: 'Yaratıcı', icon: '🎨', description: 'İlham verici ve sanatsal' },
+    { name: 'girlfriend', displayName: 'Sevgili', icon: '💕', description: 'Sıcak ve sevecen' },
 ]
 
 const DEFAULT_RESPONSE_STYLE: ResponseStyle = {
@@ -161,6 +168,9 @@ export const useSettingsStore = create<SettingsState>()(
             futurePlans: [],
             settingsOpen: false,
             activeSettingsTab: 'style',
+            featureFlags: {
+                FE_METADATA_FIRST_IMAGE_RENDER: true // Default ON as requested
+            },
 
             // Actions
             setActivePersona: (persona) => set({ activePersona: persona }),
@@ -209,6 +219,10 @@ export const useSettingsStore = create<SettingsState>()(
         }),
         {
             name: 'mami-settings',
+            version: 1,
+            migrate: (persistedState: any, version: number) => {
+                return persistedState as any
+            },
             partialize: (state) => ({
                 activePersona: state.activePersona,
                 webSearchEnabled: state.webSearchEnabled,

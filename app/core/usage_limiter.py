@@ -144,6 +144,9 @@ class UsageLimiter:
             ...     print(f"Limit aşıldı: {e.detail}")
         """
         get_session, UsageCounter, Message, Conversation = UsageLimiter._get_database_imports()
+        
+        # [DEBUG] Disable Rate Limiting
+
 
         now = datetime.utcnow()
         one_minute_ago = now - timedelta(minutes=1)
@@ -276,4 +279,5 @@ class UsageLimiter:
 
 # Dışarıdan kullanım için tek instance
 limiter = UsageLimiter()
+
 

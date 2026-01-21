@@ -8,27 +8,18 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     ChevronDown,
+    ChevronRight,
     ChevronUp,
     Link2,
     Brain,
     FileText,
     Clock,
     ExternalLink,
-    BookOpen
+    BookOpen,
+    Globe
 } from 'lucide-react'
+import type { UnifiedSource } from '@/types'
 import { cn } from '@/lib/utils'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TYPES
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface Source {
-    title: string
-    url: string
-    snippet?: string
-    date?: string
-    favicon?: string
-}
 
 interface Memory {
     id: string
@@ -38,8 +29,9 @@ interface Memory {
 }
 
 interface ContextPanelProps {
-    sources?: Source[]
+    sources?: UnifiedSource[]
     memories?: Memory[]
+    // documentChunks is legacy/redundant if we use unifiedSources for everything, but keeping for compatibility
     documentChunks?: { title: string; snippet: string }[]
     isOpen?: boolean
     onToggle?: () => void
@@ -54,131 +46,132 @@ export function ContextPanel({
     sources = [],
     memories = [],
     documentChunks = [],
-    isOpen = false,
-    onToggle,
     className
 }: ContextPanelProps) {
-    const [expanded, setExpanded] = useState(isOpen)
+    const [isOpen, setIsOpen] = useState(false)
 
-    const totalItems = sources.length + memories.length + documentChunks.length
+    // Group sources (Permissive fallback)
+    const webSources = sources.filter(s => s.type === 'web' || (!s.type && s.url))
+
+    // Deduplicate Document sources by title
+    const rawDocSources = sources.filter(s => s.type === 'document' || (!s.type && !s.url))
+    const docMap = new Map<string, typeof rawDocSources[0] & { count: number }>()
+
+    rawDocSources.forEach(s => {
+        const key = s.title || 'Adsız Doküman'
+        if (docMap.has(key)) {
+            docMap.get(key)!.count++
+        } else {
+            docMap.set(key, { ...s, count: 1 })
+        }
+    })
+    const docSources = Array.from(docMap.values())
+
+    // Calculate totals
+    const totalWeb = webSources.length
+    const totalDocs = docSources.length + documentChunks.length
+    const totalMemories = memories.length
+    const totalItems = totalWeb + totalDocs + totalMemories
 
     if (totalItems === 0) return null
 
-    const handleToggle = () => {
-        setExpanded(!expanded)
-        onToggle?.()
-    }
-
     return (
-        <div className={cn(
-            "rounded-xl border border-(--color-border) bg-(--color-bg-surface)",
-            "overflow-hidden",
-            className
-        )}>
-            {/* Header */}
-            <button
-                onClick={handleToggle}
-                className={cn(
-                    "w-full flex items-center justify-between px-4 py-3",
-                    "hover:bg-(--color-bg-surface-hover) transition-colors",
-                    "text-left"
-                )}
-            >
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-(--color-primary-soft)">
-                        <BookOpen className="h-4 w-4 text-(--color-primary)" />
-                    </div>
-                    <div>
-                        <span className="text-sm font-medium">Kullanılan Kaynaklar</span>
-                        <span className="ml-2 text-xs text-(--color-text-muted)">
-                            ({totalItems} kaynak)
-                        </span>
-                    </div>
-                </div>
-
-                <motion.div
-                    animate={{ rotate: expanded ? 180 : 0 }}
-                    transition={{ duration: 0.2 }}
+        <div className={cn("mt-2", className)}>
+            <div className="overflow-hidden">
+                <button
+                    onClick={() => setIsOpen(!isOpen)}
+                    className="flex w-full items-center gap-2 px-1 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
                 >
-                    <ChevronDown className="h-5 w-5 text-(--color-text-muted)" />
-                </motion.div>
-            </button>
+                    {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                    <span>Kaynaklar</span>
+                    <span className="ml-auto opacity-70">
+                        {totalItems} kaynak
+                    </span>
+                </button>
 
-            {/* Content */}
-            <AnimatePresence>
-                {expanded && (
-                    <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.2 }}
-                        className="border-t border-(--color-border)"
-                    >
-                        <div className="p-4 space-y-4 max-h-75 overflow-y-auto scrollbar-thin">
-                            {/* Web Sources */}
-                            {sources.length > 0 && (
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Link2 className="h-4 w-4 text-(--color-info)" />
-                                        <span className="text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
-                                            Web Kaynakları
-                                        </span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {sources.map((source, i) => (
-                                            <SourceCard key={i} source={source} />
+                <AnimatePresence initial={false}>
+                    {isOpen && (
+                        <motion.div
+                            initial={{ height: 0 }}
+                            animate={{ height: 'auto' }}
+                            exit={{ height: 0 }}
+                            className=""
+                        >
+                            <div className="pt-2 pb-1 px-1 flex flex-col gap-3">
+                                {/* Web Sources - Compact Horizontal List */}
+                                {totalWeb > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        <div className="w-full flex items-center text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-0.5">
+                                            <Globe className="w-3 h-3 mr-1.5" />
+                                            Web
+                                        </div>
+                                        {webSources.map((source, i) => (
+                                            <SourcePill key={i} source={source} index={i} />
                                         ))}
                                     </div>
-                                </div>
-                            )}
+                                )}
 
-                            {/* Memories */}
-                            {memories.length > 0 && (
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Brain className="h-4 w-4 text-(--color-secondary)" />
-                                        <span className="text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
-                                            Hatırlanan Bilgiler
-                                        </span>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {memories.map((memory) => (
-                                            <MemoryCard key={memory.id} memory={memory} />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                {/* Documents & Memories */}
+                                {(totalDocs > 0 || totalMemories > 0) && (
+                                    <div className="flex flex-col gap-2">
+                                        {/* Docs */}
+                                        {totalDocs > 0 && (
+                                            <div className="flex flex-col gap-1.5">
+                                                <div className="flex items-center text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                                                    <FileText className="w-3 h-3 mr-1.5" />
+                                                    Dokümanlar
+                                                </div>
+                                                <div className="grid grid-cols-1 gap-1.5">
+                                                    {docSources.map((s, i) => (
+                                                        <div key={i} className="text-xs bg-[var(--color-bg-surface)] border border-[var(--color-border)] px-2 py-1.5 rounded-md flex items-center gap-2 hover:border-[var(--color-primary)] transition-colors cursor-pointer group">
+                                                            <FileText className="w-3 h-3 opacity-70" />
+                                                            <span className="truncate flex-1">{s.title}</span>
+                                                            {(s.count > 1) && (
+                                                                <span className="text-[9px] bg-[var(--color-border)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded-full group-hover:bg-[var(--color-primary)] group-hover:text-white transition-colors">
+                                                                    {s.count}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
 
-                            {/* Document Chunks */}
-                            {documentChunks.length > 0 && (
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <FileText className="h-4 w-4 text-(--color-accent)" />
-                                        <span className="text-xs font-medium text-(--color-text-muted) uppercase tracking-wider">
-                                            Doküman Parçaları
-                                        </span>
+                                        {/* Memories */}
+                                        {totalMemories > 0 && (
+                                            <div className="flex flex-col gap-1.5">
+                                                <div className="flex items-center text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                                                    <Brain className="w-3 h-3 mr-1.5" />
+                                                    Hafıza
+                                                </div>
+                                                <div className="grid grid-cols-1 gap-1.5">
+                                                    {memories.map((m, i) => (
+                                                        <div key={i} className="text-xs bg-[var(--color-bg-surface)] border border-[var(--color-border)] px-2 py-1.5 rounded-md flex items-center gap-2">
+                                                            <span className="truncate flex-1 opacity-80">{m.text}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="space-y-2">
-                                        {documentChunks.map((chunk, i) => (
-                                            <DocumentChunkCard key={i} chunk={chunk} />
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+                                )}
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
         </div>
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUB COMPONENTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-function SourceCard({ source }: { source: Source }) {
-    const domain = new URL(source.url).hostname.replace('www.', '')
+function SourcePill({ source, index }: { source: UnifiedSource, index: number }) {
+    // Extract domain (e.g. "cnn.com")
+    let domain = "Link"
+    try {
+        if (source.url) {
+            domain = new URL(source.url).hostname.replace('www.', '')
+        }
+    } catch (e) { }
 
     return (
         <a
@@ -186,77 +179,27 @@ function SourceCard({ source }: { source: Source }) {
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
-                "block p-3 rounded-lg",
-                "bg-(--color-bg) border border-(--color-border)",
-                "hover:border-(--color-primary) transition-colors group"
+                "inline-flex items-center gap-1.5 px-3 py-1.5",
+                "bg-[var(--color-bg-surface)] hover:bg-[var(--color-bg-surface-hover)]",
+                "border border-[var(--color-border)] rounded-full",
+                "text-xs font-medium text-[var(--color-text-primary)]",
+                "transition-colors duration-200",
+                "max-w-[200px] truncate"
             )}
+            title={source.title} // Tooltip shows full title
         >
-            <div className="flex items-start gap-3">
-                {source.favicon ? (
-                    <img src={source.favicon} alt="" className="w-4 h-4 mt-0.5 rounded" />
-                ) : (
-                    <Link2 className="w-4 h-4 mt-0.5 text-(--color-text-muted)" />
-                )}
-
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium truncate group-hover:text-(--color-primary)">
-                            {source.title}
-                        </span>
-                        <ExternalLink className="h-3 w-3 text-(--color-text-muted) opacity-0 group-hover:opacity-100" />
-                    </div>
-                    <span className="text-xs text-(--color-text-muted)">{domain}</span>
-                    {source.snippet && (
-                        <p className="text-xs text-(--color-text-secondary) mt-1 line-clamp-2">
-                            {source.snippet}
-                        </p>
-                    )}
-                </div>
-            </div>
+            {source.favicon ? (
+                <img src={source.favicon} alt="" className="w-3.5 h-3.5 rounded-sm opacity-80" />
+            ) : (
+                <span className="text-[9px] bg-[var(--color-border)] px-1 rounded text-[var(--color-text-muted)]">{index + 1}</span>
+            )}
+            <span className="truncate">{domain}</span>
         </a>
     )
 }
 
-function MemoryCard({ memory }: { memory: Memory }) {
-    return (
-        <div className={cn(
-            "p-3 rounded-lg",
-            "bg-(--color-bg) border border-(--color-border)"
-        )}>
-            <p className="text-sm">{memory.text}</p>
-            <div className="flex items-center gap-2 mt-2">
-                <Clock className="h-3 w-3 text-(--color-text-muted)" />
-                <span className="text-xs text-(--color-text-muted)">
-                    {new Date(memory.createdAt).toLocaleDateString('tr-TR')}
-                </span>
-                <span className={cn(
-                    "px-1.5 py-0.5 rounded text-xs",
-                    memory.importance > 0.7
-                        ? "bg-(--color-error-soft) text-(--color-error)"
-                        : memory.importance > 0.4
-                            ? "bg-(--color-warning-soft) text-(--color-warning)"
-                            : "bg-(--color-success-soft) text-(--color-success)"
-                )}>
-                    {memory.importance > 0.7 ? 'Önemli' : memory.importance > 0.4 ? 'Normal' : 'Düşük'}
-                </span>
-            </div>
-        </div>
-    )
-}
-
-function DocumentChunkCard({ chunk }: { chunk: { title: string; snippet: string } }) {
-    return (
-        <div className={cn(
-            "p-3 rounded-lg",
-            "bg-(--color-bg) border border-(--color-border)"
-        )}>
-            <div className="flex items-center gap-2 mb-1">
-                <FileText className="h-3 w-3 text-(--color-accent)" />
-                <span className="text-xs font-medium">{chunk.title}</span>
-            </div>
-            <p className="text-xs text-(--color-text-secondary) line-clamp-3">
-                {chunk.snippet}
-            </p>
-        </div>
-    )
-}
+// Legacy components kept but unused for now
+// Legacy components kept but unused for now
+function MemoryCard({ memory }: { memory: Memory }) { return null }
+function DocumentChunkCard({ chunk }: { chunk: { title: string; snippet: string } }) { return null }
+function SourceCard({ source }: { source: UnifiedSource }) { return null }

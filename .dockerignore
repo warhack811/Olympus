@@ -1,0 +1,85 @@
+# =============================================================================
+# Docker Build Ignore Dosyası
+# =============================================================================
+# Docker build sırasında gereksiz dosyaları hariç tutmak için.
+# Bu dosyalar Docker imajına dahil edilmeyecek.
+
+# Git
+.git
+.github
+.gitignore
+.gitattributes
+
+# Geliştirme Ortamı
+.venv
+venv
+ENV
+env
+.env
+.env.local
+.env.*.local
+
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+.mypy_cache
+.dmypy.json
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dokümantasyon ve Raporlar
+docs/
+README.md
+*.md
+
+# Test Dosyaları
+tests/
+.pytest_cache
+
+# Scripts
+scripts/
+
+# Yedekler
+backups/
+_ui_backup/
+*.backup
+*.bak
+
+# Veri (Development)
+data/api_*.json
+data/eval_results.json
+logs/*.log.*
+
+# Diğer
+.pre-commit-config.yaml
+.roomodes
+Makefile
+*.tmp
+*.temp

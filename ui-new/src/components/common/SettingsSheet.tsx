@@ -17,8 +17,8 @@ import {
 } from 'lucide-react'
 import { useSettingsStore, PERSONAS, type PersonaMode } from '@/stores/settingsStore'
 import { useThemeStore } from '@/stores/themeStore'
+import { usePreferences, useIsMobile } from '@/hooks'
 import { Button, Input } from '@/components/ui'
-import { useIsMobile } from '@/hooks'
 import { cn } from '@/lib/utils'
 import { DocumentsTab } from './DocumentsTab'
 
@@ -140,10 +140,10 @@ export function SettingsSheet() {
 function ResponseStyleTab() {
     const {
         activePersona,
-        setActivePersona,
         responseStyle,
-        setResponseStyle
-    } = useSettingsStore()
+        savePersona,
+        saveResponseStyle
+    } = usePreferences()
 
     return (
         <div className="space-y-6">
@@ -157,7 +157,7 @@ function ResponseStyleTab() {
                     {PERSONAS.map(persona => (
                         <button
                             key={persona.name}
-                            onClick={() => setActivePersona(persona.name)}
+                            onClick={() => savePersona(persona.name)}
                             className={cn(
                                 "flex items-center gap-3 p-3 rounded-xl border transition-all text-left",
                                 activePersona === persona.name
@@ -190,7 +190,7 @@ function ResponseStyleTab() {
                     ].map(opt => (
                         <button
                             key={opt.value}
-                            onClick={() => setResponseStyle({ tone: opt.value as any })}
+                            onClick={() => saveResponseStyle({ tone: opt.value as any })}
                             className={cn(
                                 "px-4 py-2 rounded-full text-sm border transition-all",
                                 responseStyle.tone === opt.value
@@ -216,7 +216,7 @@ function ResponseStyleTab() {
                     ].map(opt => (
                         <button
                             key={opt.value}
-                            onClick={() => setResponseStyle({ emojiLevel: opt.value as any })}
+                            onClick={() => saveResponseStyle({ emojiLevel: opt.value as any })}
                             className={cn(
                                 "flex-1 px-3 py-2 rounded-lg text-sm border transition-all",
                                 responseStyle.emojiLevel === opt.value
@@ -241,7 +241,7 @@ function ResponseStyleTab() {
                     ].map(opt => (
                         <button
                             key={opt.value}
-                            onClick={() => setResponseStyle({ length: opt.value as any })}
+                            onClick={() => saveResponseStyle({ length: opt.value as any })}
                             className={cn(
                                 "flex-1 p-3 rounded-xl border transition-all text-center",
                                 responseStyle.length === opt.value
@@ -394,15 +394,15 @@ function MemoryTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ImageSettingsTab() {
-    const { imageSettings, setImageSettings } = useSettingsStore()
+    const { imageSettings, saveImageSettings } = usePreferences()
     const [mode, setMode] = useState<'basic' | 'advanced'>('basic')
 
     // FIX: Clamp legacy persisted values (e.g. 55) to safe range
     useEffect(() => {
         if (imageSettings.steps > 35) {
-            setImageSettings({ steps: 20 })
+            saveImageSettings({ steps: 20 })
         }
-    }, [imageSettings.steps, setImageSettings])
+    }, [imageSettings.steps, saveImageSettings])
 
     // Aspect Ratio presets with dimensions
     const ASPECT_RATIOS = [
@@ -417,13 +417,13 @@ function ImageSettingsTab() {
         const ratio = ASPECT_RATIOS.find(r => r.id === id)
         if (ratio) {
             if (id !== 'custom') {
-                setImageSettings({
+                saveImageSettings({
                     aspectRatio: id as any,
                     width: ratio.w,
                     height: ratio.h
                 })
             } else {
-                setImageSettings({ aspectRatio: 'custom' })
+                saveImageSettings({ aspectRatio: 'custom' })
             }
         }
     }
@@ -510,7 +510,7 @@ function ImageSettingsTab() {
                                     <input
                                         type="number"
                                         value={imageSettings.width}
-                                        onChange={(e) => setImageSettings({ width: Number(e.target.value) })}
+                                        onChange={(e) => saveImageSettings({ width: Number(e.target.value) })}
                                         className="w-full p-2 rounded-lg bg-(--color-bg-input) border border-(--color-border) text-sm"
                                         step={64}
                                         min={256}
@@ -522,7 +522,7 @@ function ImageSettingsTab() {
                                     <input
                                         type="number"
                                         value={imageSettings.height}
-                                        onChange={(e) => setImageSettings({ height: Number(e.target.value) })}
+                                        onChange={(e) => saveImageSettings({ height: Number(e.target.value) })}
                                         className="w-full p-2 rounded-lg bg-(--color-bg-input) border border-(--color-border) text-sm"
                                         step={64}
                                         min={256}
@@ -540,7 +540,7 @@ function ImageSettingsTab() {
                             {STYLES.map(style => (
                                 <button
                                     key={style.id}
-                                    onClick={() => setImageSettings({ defaultStyle: style.id as any })}
+                                    onClick={() => saveImageSettings({ defaultStyle: style.id as any })}
                                     className={cn(
                                         "relative overflow-hidden group p-3 h-20 rounded-xl border transition-all text-left flex flex-col justify-end",
                                         imageSettings.defaultStyle === style.id
@@ -577,7 +577,7 @@ function ImageSettingsTab() {
                         <button
                             onClick={() => {
                                 const newMode = imageSettings.qualityMode === 'hd' ? 'draft' : 'hd'
-                                setImageSettings({
+                                saveImageSettings({
                                     qualityMode: newMode,
                                     steps: newMode === 'hd' ? 35 : 20 // Auto adjust steps based on preference
                                 })
@@ -607,7 +607,7 @@ function ImageSettingsTab() {
                             <label className="text-xs font-medium text-(--color-text-muted)">Model Checkpoint</label>
                             <select
                                 value={imageSettings.model}
-                                onChange={(e) => setImageSettings({ model: e.target.value })}
+                                onChange={(e) => saveImageSettings({ model: e.target.value })}
                                 className="w-full p-2 rounded-lg bg-(--color-bg-input) border border-(--color-border) text-sm"
                             >
                                 <option value="Generic (SDXL)">Generic (SDXL)</option>
@@ -631,7 +631,7 @@ function ImageSettingsTab() {
                                 max="35"
                                 step="1"
                                 value={imageSettings.steps}
-                                onChange={(e) => setImageSettings({ steps: parseInt(e.target.value) })}
+                                onChange={(e) => saveImageSettings({ steps: parseInt(e.target.value) })}
                                 className="w-full accent-(--color-primary)"
                             />
                             <div className="flex justify-between text-[10px] text-(--color-text-muted) px-1">
@@ -646,7 +646,7 @@ function ImageSettingsTab() {
                             <label className="text-xs font-medium text-(--color-text-muted)">Sampler</label>
                             <select
                                 value={imageSettings.sampler}
-                                onChange={(e) => setImageSettings({ sampler: e.target.value })}
+                                onChange={(e) => saveImageSettings({ sampler: e.target.value })}
                                 className="w-full p-2 rounded-lg bg-(--color-bg-input) border border-(--color-border) text-sm"
                             >
                                 <option value="Euler a">Euler a</option>
@@ -660,7 +660,7 @@ function ImageSettingsTab() {
                             <input
                                 type="number"
                                 value={imageSettings.seed}
-                                onChange={(e) => setImageSettings({ seed: parseInt(e.target.value) })}
+                                onChange={(e) => saveImageSettings({ seed: parseInt(e.target.value) })}
                                 placeholder="-1"
                                 className="w-full p-2 rounded-lg bg-(--color-bg-input) border border-(--color-border) text-sm"
                             />

@@ -178,7 +178,7 @@ async def add_memory(
         logger.info(f"[MEMORY] Eklendi ({memory_type}): {text[:50]}...")
         return _record_to_item(record)
     except Exception as e:
-        logger.error(f"[MEMORY] Ekleme hatası: {e}")
+        logger.error(f"[MEMORY] Ekleme hatası: {e}", exc_info=True)
         raise
 
 
@@ -201,7 +201,8 @@ async def search_memories(username: str, query: str, max_items: int = 5) -> list
         records = await MemoryService.retrieve_relevant_memories(user_id=user_id, query=query, limit=max_items)
         return [_record_to_item(rec) for rec in records]
     except Exception as e:
-        logger.error(f"[MEMORY] Arama hatası: {e}")
+        # Silent failure - return empty list but log with traceback for debugging
+        logger.error(f"[MEMORY] Arama hatası: {e}", exc_info=True)
         return []
 
 
@@ -224,7 +225,8 @@ async def list_memories(username: str) -> list[MemoryItem]:
         )
         return [_record_to_item(rec) for rec in records]
     except Exception as e:
-        logger.error(f"[MEMORY] Listeleme hatası: {e}")
+        # Silent failure - return empty list but log with traceback for debugging
+        logger.error(f"[MEMORY] Listeleme hatası: {e}", exc_info=True)
         return []
 
 
@@ -248,7 +250,7 @@ async def delete_memory(username: str, memory_id: str) -> bool:
             logger.info(f"[MEMORY] Silindi: {memory_id}")
         return result
     except Exception as e:
-        logger.error(f"[MEMORY] Silme hatası: {e}")
+        logger.error(f"[MEMORY] Silme hatası: {e}", exc_info=True)
         return False
 
 
@@ -280,7 +282,7 @@ async def update_memory(username: str, memory_id: str, text: str, importance: fl
         logger.info(f"[MEMORY] Güncellendi: {memory_id}")
         return _record_to_item(record)
     except Exception as e:
-        logger.error(f"[MEMORY] Güncelleme hatası: {e}")
+        logger.error(f"[MEMORY] Güncelleme hatası: {e}", exc_info=True)
         return None
 
 
@@ -293,4 +295,5 @@ async def cleanup_old_memories(username: str) -> int:
     """
     # TODO: Implement cleanup logic
     return 0
+
 

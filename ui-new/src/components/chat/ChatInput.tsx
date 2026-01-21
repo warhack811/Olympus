@@ -36,11 +36,14 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
     const createConversation = useChatStore((state) => state.createConversation)
     const startStreaming = useChatStore((state) => state.startStreaming)
     const appendToStreaming = useChatStore((state) => state.appendToStreaming)
+    const appendReasoning = useChatStore((state) => state.appendReasoning)
+    const setUnifiedSources = useChatStore((state) => state.setUnifiedSources)
     const stopStreaming = useChatStore((state) => state.stopStreaming)
     const isMobile = useIsMobile()
     const { bottom: safeAreaBottom } = useSafeAreaInsets()
     const { isVisible: isKeyboardVisible, height: keyboardHeight } = useMobileKeyboard()
     const responseStyle = useSettingsStore((state) => state.responseStyle)
+    const activePersona = useSettingsStore((state) => state.activePersona)
     const imageSettings = useSettingsStore((state) => state.imageSettings)
     const [isFocused, setIsFocused] = useState(false)
     const [attachments, setAttachments] = useState<File[]>([])
@@ -78,6 +81,7 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
         const message = inputValue.trim()
         if (!message && attachments.length === 0) return
 
+        console.log('[Chat] handleSend triggered - isSending:', isSending, 'isStreaming:', isStreaming)
         setIsSending(true)
         setInputValue('')
         setShowToolbar(false)
@@ -85,10 +89,12 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
         // Clear reply after sending
         onClearReply?.()
 
-        // Use existing conversation ID or null for new conversation
-        let convId = currentConversationId
+        // FIX 3: Capture conversation ID at send time to prevent race conditions
+        // This ensures the message goes to the correct conversation even if user
+        // quickly switches conversations while the message is being sent
+        const sendConversationId = currentConversationId
 
-        console.log('[Chat] Sending message:', { message, convId, replyTo: replyTo?.id, attachments: attachments.length })
+        console.log('[Chat] Sending message:', { message, sendConversationId, replyTo: replyTo?.id, attachments: attachments.length })
 
         try {
             // 1. Upload Attachments (if any)
@@ -98,7 +104,7 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                 console.log('[Chat] Uploading attachments...')
                 try {
                     const uploadResults = await Promise.all(attachments.map(file =>
-                        documentApi.uploadDocument(file, convId)
+                        documentApi.uploadDocument(file, sendConversationId)
                     ))
 
                     // Collect image paths - Backend returns {type: 'image', path: '...'}
@@ -137,10 +143,15 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                 role: 'user',
                 content: textToSend,
                 replyToId: replyTo?.id,
+                images: uploadedImagePaths.length > 0 ? uploadedImagePaths.map(path => ({
+                    id: Math.random().toString(36).substring(7),
+                    url: path,
+                    status: 'complete'
+                })) : undefined,
             })
 
             // Add placeholder for assistant message
-            const assistantMsgId = addMessage({
+            let assistantMsgId = addMessage({
                 role: 'assistant',
                 content: '',
                 isStreaming: true,
@@ -152,7 +163,8 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
             console.log('[Chat] Calling API...')
             const response = await chatApi.sendMessage({
                 message: textToSend,
-                conversationId: convId, // null for new conversation
+                conversationId: sendConversationId, // Use captured ID
+                persona: activePersona,
                 stream: true,
                 styleProfile: responseStyle,
                 images: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
@@ -163,9 +175,9 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
 
             // Get conversation ID from response header (backend creates it)
             const newConvId = response.headers.get('X-Conversation-ID')
-            if (newConvId && !convId) {
+            if (newConvId && !sendConversationId) {
                 console.log('[Chat] Got new conversation ID:', newConvId)
-                convId = newConvId
+                // Only update if we were creating new conversation
 
                 // Create new conversation object and add to list
                 const newConversation = {
@@ -184,6 +196,13 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                 }))
 
                 console.log('[Chat] New conversation added to sidebar:', newConvId)
+            } else if (newConvId && sendConversationId && newConvId !== sendConversationId) {
+                // FIX 3: Guard against conversation ID mismatch
+                console.error('[Chat] Conversation ID mismatch!', {
+                    sent: sendConversationId,
+                    received: newConvId
+                })
+                // Don't update store, keep using sent ID
             }
 
             if (!response.ok) {
@@ -197,83 +216,171 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                 throw new Error('Yanıt gövdesi okunamadı.')
             }
 
-            // Handle streaming response - backend returns plain text chunks
-            const reader = response.body.getReader()
-            const decoder = new TextDecoder()
+            // Handle streaming response - Structured NDJSON with timeout
+            const streamTimeout = 60000 // 60 second timeout
+            const streamController = new AbortController()
+            const streamTimeoutId = setTimeout(() => streamController.abort(), streamTimeout)
+
             let fullResponse = ''
             let hasContent = false
+            let hasImageJob = false
 
-            if (reader) {
-                let checkMarker = true
-                let streamBuffer = ''
-                const MAX_BUFFER_SIZE = 200
+            try {
+                const reader = response.body.getReader()
+                const decoder = new TextDecoder()
+                let buffer = ''
 
-                while (true) {
-                    const { done, value } = await reader.read()
-                    if (done) break
+                if (reader) {
+                    while (true) {
+                        try {
+                            const { done, value } = await reader.read()
+                            if (done) break
 
-                    let chunk = decoder.decode(value, { stream: true })
+                            buffer += decoder.decode(value, { stream: true })
+                            const lines = buffer.split('\n')
 
-                    if (checkMarker) {
-                        streamBuffer += chunk
-                        const convIdMatch = streamBuffer.match(/\[CONV_ID:([^\]]+)\]/)
+                            // Keep the last part if it doesn't end with newline
+                            buffer = lines.pop() || ''
 
-                        if (convIdMatch) {
-                            const streamConvId = convIdMatch[1]
-                            console.log('[Chat] Got CONV_ID from stream:', streamConvId)
+                            for (const line of lines) {
+                                if (!line.trim()) continue
 
-                            if (!convId && streamConvId) {
-                                convId = streamConvId
-                                const newConversation = {
-                                    id: streamConvId,
-                                    title: textToSend.slice(0, 50) + (textToSend.length > 50 ? '...' : ''),
-                                    preview: textToSend.slice(0, 100),
-                                    messageCount: 1,
-                                    createdAt: new Date().toISOString(),
-                                    updatedAt: new Date().toISOString(),
+                                try {
+                                    const event = JSON.parse(line)
+
+                                    switch (event.type) {
+                                        case 'metadata':
+                                            // [PHASE 5.1 persistence handshake]
+                                            if (event.assistant_message_id) {
+                                                const newId = String(event.assistant_message_id)
+                                                console.log(`[Chat] Handshake: Replacing temp ID ${assistantMsgId} with persistent ID ${newId}`)
+
+                                                // Update the message ID in the store
+                                                useChatStore.getState().updateMessageId(assistantMsgId, newId)
+
+                                                // Update our local reference for subsequent events
+                                                assistantMsgId = newId
+                                            }
+                                            break
+
+                                        case 'chunk':
+                                            if (event.content) {
+                                                hasContent = true
+                                                fullResponse += event.content
+                                                // Use current assistantMsgId (which might have been updated by handshake)
+                                                useChatStore.getState().updateMessage(assistantMsgId, {
+                                                    content: fullResponse
+                                                })
+                                            }
+                                            break
+
+                                        case 'thought':
+                                            // Map backend thought to frontend model
+                                            appendReasoning({
+                                                task_id: event.task_id || 'unknown',
+                                                category: event.cat || 'OTHER',
+                                                content: event.content || event.thought,
+                                                status: 'completed',
+                                                timestamp: Date.now()
+                                            })
+                                            break
+
+                                        case 'task_result':
+                                            // Detect Flux Tool execution specifically
+                                            // event structure: { type: 'task_result', result: { type: 'tool', tool_name: 'flux_tool', output: { job_id: '...' } } }
+                                            const res = event.result || {}
+                                            if (res.type === 'tool' && res.tool_name === 'flux_tool') {
+                                                const output = res.output || {}
+                                                // Backend TaskRunner returns: { prompt, result: { job_id, status }, thought }
+                                                const jobId = output.result?.job_id || output.job_id
+
+                                                console.log('[Chat] Task Result Payload:', {
+                                                    tool: res.tool_name,
+                                                    hasResult: !!output.result,
+                                                    jobId
+                                                })
+
+                                                if (jobId) {
+                                                    hasImageJob = true
+                                                    console.log('[Chat] Task Result: Image Job Detected:', jobId)
+
+                                                    // Dynamically import store to avoid circular deps if any
+                                                    const { useImageJobsStore } = await import('@/stores/imageJobsStore')
+
+                                                    // 1. Link Job
+                                                    useImageJobsStore.getState().linkMessageToJob(assistantMsgId, jobId)
+                                                    useImageJobsStore.getState().updateJob({
+                                                        id: jobId,
+                                                        conversationId: (sendConversationId || newConvId) || undefined,
+                                                        status: 'queued',
+                                                        progress: 0,
+                                                        prompt: textToSend
+                                                    })
+
+                                                    // 2. Attach Image Pending Metadata (Do NOT overwrite content)
+                                                    // We use updateMessage to add metadata to the existing text response
+                                                    useChatStore.getState().updateMessage(assistantMsgId, {
+                                                        isStreaming: false, // Stop streaming spinner for this message
+                                                        extra_metadata: {
+                                                            type: 'image',
+                                                            job_id: jobId,
+                                                            status: 'queued',
+                                                            progress: 0,
+                                                            queue_position: 1,
+                                                        }
+                                                    })
+                                                }
+                                            }
+                                            break
+
+                                        case 'sources':
+                                            if (event.data) {
+                                                setUnifiedSources(event.data)
+                                            }
+                                            break
+
+                                        case 'error':
+                                            console.error('[Stream Error]', event.content)
+                                            appendToStreaming(`\n\n⚠️ Hata: ${event.content}`)
+                                            break
+                                    }
+                                } catch (e) {
+                                    // Verify if it's a legacy plain text chunk (fallback)
+                                    console.warn('[Chat] Failed to parse JSON line, treating as text:', line)
+                                    if (line.trim()) {
+                                        hasContent = true
+                                        fullResponse += line
+                                        appendToStreaming(line)
+                                    }
                                 }
-
-                                useChatStore.setState((state) => ({
-                                    conversations: [newConversation, ...state.conversations.filter(c => c.id !== streamConvId)],
-                                    currentConversationId: streamConvId
-                                }))
-
-                                useChatStore.getState().setCurrentConversation(streamConvId, true)
                             }
-                            streamBuffer = streamBuffer.replace(/\[CONV_ID:[^\]]+\]/, '').trim()
-                            checkMarker = false
-                            chunk = streamBuffer
-                        } else {
-                            if (streamBuffer.length > MAX_BUFFER_SIZE) {
-                                console.warn('[Chat] CONV_ID marker not found in initial buffer')
-                                checkMarker = false
-                                chunk = streamBuffer
-                            } else {
-                                continue
+                        } catch (streamError) {
+                            // Handle stream read errors
+                            if (streamError instanceof Error && streamError.name === 'AbortError') {
+                                throw new Error(`Stream timeout - response took longer than ${streamTimeout}ms`)
                             }
+                            throw streamError
                         }
                     }
-
-                    if (chunk.includes('[IMAGE_QUEUED:')) {
-                        fullResponse += chunk
-                        continue
-                    }
-
-                    if (chunk) {
-                        hasContent = true
-                        fullResponse += chunk
-                        appendToStreaming(chunk)
-                    }
+                } else {
+                    console.error('[Chat] No response body reader')
+                    throw new Error('Yanıt gövdesi okunamadı.')
                 }
-            } else {
-                console.error('[Chat] No response body reader')
-                appendToStreaming('⚠️ Yanıt alınamadı.')
+            } catch (streamError) {
+                console.error('[Chat] Stream error:', streamError)
+                const errorMsg = streamError instanceof Error
+                    ? streamError.message
+                    : 'Stream hatası'
+                appendToStreaming(`\n\n⚠️ ${errorMsg}`)
+            } finally {
+                clearTimeout(streamTimeoutId)
             }
 
             // Check if this is an image queued response
             // New format: [IMAGE_QUEUED:job_id:message_id]
             const imageMatch = fullResponse.match(/\[IMAGE_QUEUED:([^:]+):(\d+)\]/)
-            const isImageRequest = imageMatch !== null || !hasContent
+            // Ensure we don't double-process if handled in stream loop
+            const isImageRequest = !hasImageJob && (imageMatch !== null || !hasContent)
 
             if (isImageRequest) {
                 // Delete the streaming placeholder
@@ -283,12 +390,23 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                     const [, jobId, messageId] = imageMatch
                     console.log('[Chat] Image request with IDs:', { jobId: jobId.slice(0, 8), messageId })
 
+                    const { useImageJobsStore } = await import('@/stores/imageJobsStore')
+                    useImageJobsStore.getState().linkMessageToJob(messageId, jobId)
+                    useImageJobsStore.getState().updateJob({
+                        id: jobId,
+                        conversationId: sendConversationId || newConvId || undefined,
+                        status: 'queued',
+                        progress: 0,
+                        prompt: textToSend
+                    })
+
                     useChatStore.getState().addMessage({
                         id: messageId,
                         role: 'assistant',
                         content: '[IMAGE_PENDING] Görsel isteğiniz kuyruğa alındı...',
-                        conversationId: convId || newConvId || '',
+                        conversationId: sendConversationId || newConvId || '',
                         extra_metadata: {
+                            type: 'image',
                             job_id: jobId,
                             status: 'queued',
                             progress: 0,
@@ -297,7 +415,7 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                     })
                 } else {
                     console.log('[Chat] Image request without IDs - reloading from DB')
-                    const finalConvId = convId || newConvId
+                    const finalConvId = sendConversationId || newConvId
                     if (finalConvId) {
                         try {
                             const freshMessages = await chatApi.getMessages(finalConvId)
@@ -309,11 +427,23 @@ export function ChatInput({ replyTo, onClearReply }: ChatInputProps) {
                 }
             }
         } catch (error) {
+            // Hata yönetimi: Kullanıcıya bildirim ver ve log yaz
+            console.error('[Chat] Mesaj gönderme başarısız:', error)
+
+            const errorMessage = error instanceof Error
+                ? error.message
+                : 'Mesaj gönderilemedi'
+
+            // Kullanıcıya hata mesajı göster
+            addMessage({
+                role: 'assistant',
+                content: `⚠️ Hata: ${errorMessage}`
+            })
         } finally {
             setIsSending(false)
             stopStreaming()
         }
-    }, [canSend, inputValue, currentConversationId, addMessage, createConversation, startStreaming, appendToStreaming, stopStreaming, setInputValue, imageSettings])
+    }, [canSend, inputValue, attachments, currentConversationId, addMessage, createConversation, startStreaming, appendToStreaming, stopStreaming, setInputValue, imageSettings, activePersona, responseStyle, onClearReply, replyTo])
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         // Don't send if command palette is open - let it handle navigation

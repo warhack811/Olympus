@@ -8,6 +8,15 @@ from app.core.models import Conversation, Message, User
 from app.image.gpu_state import get_state
 from app.image.job_queue import job_queue
 from app.image.pending_state import list_pending_jobs_for_user
+import shutil
+import os
+from pathlib import Path
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File
+from app.config import get_settings
+from app.core.logger import get_logger
+
+logger = get_logger(__name__)
+settings = get_settings()
 
 router = APIRouter()
 
@@ -44,7 +53,30 @@ async def get_job_status_endpoint(job_id: str, user: User = Depends(get_current_
 
     job = get_job_status(job_id)
     if not job:
-        # Job tamamlanmış veya hiç olmamış olabilir
+        # Job kuyrukta yok. Belki tamamlanmıştır?
+        from sqlmodel import select
+        from app.core.database import get_session
+        from app.core.models import Message
+
+        with get_session() as session:
+            stmt = select(Message).where(Message.role == "bot").order_by(Message.created_at.desc()).limit(100)
+            candidates = session.exec(stmt).all()
+            
+            for m in candidates:
+                meta = m.extra_metadata or {}
+                if meta.get("job_id") == job_id:
+                    status = meta.get("status", "unknown")
+                    return {
+                        "job_id": job_id,
+                        "status": status,
+                        "progress": 100 if status == "complete" else 0,
+                        "queue_position": 0,
+                        "image_url": meta.get("image_url"),
+                        "error": meta.get("error"),
+                        "conversation_id": m.conversation_id,
+                        "from_db": True
+                    }
+
         return {
             "job_id": job_id,
             "status": "unknown",
@@ -108,9 +140,18 @@ async def list_user_images(limit: int = 50, user: User = Depends(get_current_act
         messages = session.exec(stmt).all()
         result = []
         for idx, msg in enumerate(messages):
-            if "IMAGE_PATH:" in msg.content:
+            image_url = None
+            meta = msg.extra_metadata or {}
+            
+            # 1. New metadata system check
+            if meta.get("type") == "image" and meta.get("image_url"):
+                image_url = meta.get("image_url")
+            
+            # 2. Legacy marker check
+            elif "IMAGE_PATH:" in msg.content:
                 image_url = msg.content.split("IMAGE_PATH:")[1].strip().split()[0]
-                meta = msg.extra_metadata or {}
+            
+            if image_url:
                 result.append(
                     UserImageOut(
                         index=idx,
@@ -120,6 +161,49 @@ async def list_user_images(limit: int = 50, user: User = Depends(get_current_act
                         conversation_id=msg.conversation_id,
                     )
                 )
+            
             if len(result) >= limit:
                 break
         return result
+
+
+@router.post("/images/internal-upload")
+async def internal_upload_image(
+    file: UploadFile = File(...),
+    x_forge_worker_token: str = Header(...),
+):
+    """
+    Local Worker'dan gelen görseli güvenli bir şekilde sunucuya kaydeder.
+    RAM Koruması: shutil.copyfileobj kullanılarak stream edilir.
+    """
+    if x_forge_worker_token != settings.INTERNAL_UPLOAD_TOKEN:
+        logger.warning(f"[UPLOAD] Unauthorized internal upload attempt with token: {x_forge_worker_token}")
+        raise HTTPException(status_code=403, detail="Invalid worker token")
+
+    # Dosya yolunu belirle
+    IMAGES_DIR = Path("data") / "images"
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Dosya adını güvenli hale getir veya olduğu gibi kullan (Worker zaten uniqleştiriyor)
+    file_path = IMAGES_DIR / file.filename
+    
+    try:
+        # RAM Korumalı Kayıt: Dosya içeriği belleğe alınmadan doğrudan diske stream edilir.
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Absolute URL support for cross-domain stability
+        image_url = f"/images/{file.filename}"
+        if settings.ATLAS_API_BASE_URL:
+            base = settings.ATLAS_API_BASE_URL.rstrip("/")
+            image_url = f"{base}/images/{file.filename}"
+
+        logger.info(f"[UPLOAD] Image saved successfully: {file.filename} -> {image_url}")
+        return {
+            "success": True, 
+            "image_url": image_url,
+            "filename": file.filename
+        }
+    except Exception as e:
+        logger.error(f"[UPLOAD] Error saving file: {e}")
+        raise HTTPException(status_code=500, detail=f"File save error: {str(e)}")

@@ -6,6 +6,7 @@ from app.auth.dependencies import get_current_active_user
 from app.core.logger import get_logger
 from app.core.models import User
 from app.memory.rag_service import rag_service
+from app.memory import rag_v2_summary_processor
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -60,17 +61,39 @@ async def upload_document(
 
     # --- DOCUMENT FLOW (RAG SERVICE) ---
     # Artık tüm logic (extraction, chunking, v1/v2 decision) servis içinde
+    chunks_count = 0
     try:
-        chunks_count = rag_service.add_file(
-            file_path=dest_path, filename=filename, owner=user.username, scope="user", conversation_id=conversation_id
-        )
+        # Dosya tipine göre işle
+        if ext == "pdf":
+            chunks_count = rag_service.add_file(
+                file_path=dest_path,
+                filename=filename,
+                owner=user.username,
+                scope="user",
+                conversation_id=conversation_id
+            )
+            
+            # Background summary processing for large docs
+            if chunks_count > 50:  # ~100+ pages
+                try:
+                    await rag_v2_summary_processor.queue_summary_job(
+                        upload_id=dest_path.stem,  # Use filename as upload_id
+                        filename=filename,
+                        owner=user.username,
+                        file_path=str(dest_path),
+                        scope="user"
+                    )
+                    logger.info(f"[Documents] Summary processing queued for {filename}")
+                except Exception as e:
+                    # Non-critical - don't fail upload if summary job fails
+                    logger.warning(f"[Documents] Failed to queue summary job: {e}")
+        else: # For other document types like TXT
+            chunks_count = rag_service.add_file(
+                file_path=dest_path, filename=filename, owner=user.username, scope="user", conversation_id=conversation_id
+            )
     except Exception as e:
-        print(f"[UPLOAD ERROR] {type(e).__name__}: {e}")
-        logger.error(f"[UPLOAD] RAG ingestion failed: {type(e).__name__}: {e}")
-        import traceback
-
-        logger.error(traceback.format_exc())
-        traceback.print_exc()
+        # Error logging with traceback (exc_info=True)
+        logger.error(f"[UPLOAD] RAG ingestion failed: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Belge işlenirken hata: {str(e)}")
 
     if chunks_count == 0:

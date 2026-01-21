@@ -6,6 +6,7 @@
  */
 
 import { decodeHtmlEntities } from '@/lib/utils'
+import { captureApiError, captureNetworkError, addBreadcrumb } from '@/lib/errorTracking'
 import type {
     ApiResponse,
     User,
@@ -17,45 +18,177 @@ import type {
     Persona
 } from '@/types'
 
-// Base URL from Env or Default to Localhost (ignoring Vite proxy for consistency)
-export const API_DOMAIN = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-const API_BASE = `${API_DOMAIN}/api/v1`
+// Use relative path for Proxy/Cookie support in development, or current origin in production
+export const API_DOMAIN = ''
+const API_BASE = `/api/v1`
+
+/**
+ * Normalizes image URLs for cross-domain usage.
+ * If URL is relative (/images/...), prepends API_DOMAIN.
+ */
+export function normalizeImageUrl(url: string | null | undefined): string {
+    if (!url) return ''
+    if (url.startsWith('http')) return url
+    if (url.startsWith('data:')) return url // Base64 support
+
+    // Check if it's a user upload (usually contains username/images/...)
+    // Or if it's already prefixed with /uploads/
+    if (url.startsWith('uploads/')) return `${API_DOMAIN}/${url}`
+    if (url.includes('/images/')) {
+        // Handle paths like "admin/images/photo.png" -> "/uploads/admin/images/photo.png"
+        return `${API_DOMAIN}/uploads/${url}`
+    }
+
+    if (url.startsWith('/')) return `${API_DOMAIN}${url}`
+    return `${API_DOMAIN}/${url}`
+}
 
 
 /**
+ * Fetch with retry logic, timeout, and rate limit handling
+ * Implements exponential backoff for transient failures
+ */
+async function fetchWithRetry<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    maxRetries: number = 3,
+    timeout: number = 10000
+): Promise<T> {
+    const url = `${API_BASE}${endpoint}`
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+            // Breadcrumb ekle - API isteği başlangıcı
+            addBreadcrumb(
+                `API Request: ${options.method || 'GET'} ${endpoint}`,
+                'api',
+                'info'
+            )
+
+            const response = await fetch(url, {
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers,
+                },
+                ...options,
+                signal: controller.signal,
+            })
+
+            clearTimeout(timeoutId)
+
+            // Breadcrumb ekle - API yanıtı
+            addBreadcrumb(
+                `API Response: ${response.status} ${endpoint}`,
+                'api',
+                response.ok ? 'info' : 'warning'
+            )
+
+            // Handle rate limiting (429)
+            if (response.status === 429) {
+                const waitTime = 1000 * Math.pow(2, attempt)
+                if (attempt < maxRetries) {
+                    console.warn(`[API] Rate limited. Retrying in ${waitTime}ms...`)
+                    await new Promise(r => setTimeout(r, waitTime))
+                    continue
+                }
+            }
+
+            // Handle server errors (5xx) with retry
+            if (response.status >= 500 && attempt < maxRetries) {
+                const waitTime = 1000 * Math.pow(2, attempt)
+                console.warn(`[API] Server error ${response.status}. Retrying in ${waitTime}ms...`)
+                await new Promise(r => setTimeout(r, waitTime))
+                continue
+            }
+
+            // Handle auth errors (no retry)
+            if (response.status === 401) {
+                const error = new Error('Unauthorized')
+                captureApiError(error, {
+                    endpoint,
+                    method: options.method || 'GET',
+                    statusCode: response.status,
+                })
+                throw error
+            }
+
+            // Handle other client errors (4xx, except 429)
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}))
+                const errorMessage = error.message || error.detail || `Request failed: ${response.status}`
+                const apiError = new Error(errorMessage)
+                
+                captureApiError(apiError, {
+                    endpoint,
+                    method: options.method || 'GET',
+                    statusCode: response.status,
+                    responseData: error,
+                })
+                
+                throw apiError
+            }
+
+            // Handle empty responses
+            const text = await response.text()
+            if (!text) {
+                throw new Error('Empty response from server')
+            }
+
+            return JSON.parse(text)
+        } catch (error) {
+            // Handle timeout
+            if (error instanceof Error && error.name === 'AbortError') {
+                const waitTime = 1000 * Math.pow(2, attempt)
+                if (attempt < maxRetries) {
+                    console.warn(`[API] Request timeout. Retrying in ${waitTime}ms...`)
+                    await new Promise(r => setTimeout(r, waitTime))
+                    continue
+                }
+                
+                const timeoutError = new Error(`Request timeout after ${timeout}ms`)
+                captureNetworkError(timeoutError, {
+                    url,
+                    timeout,
+                    type: 'timeout',
+                })
+                throw timeoutError
+            }
+
+            // If this was the last attempt, throw the error
+            if (attempt === maxRetries) {
+                // Network error'ını Sentry'ye gönder
+                if (error instanceof Error) {
+                    captureNetworkError(error, {
+                        url,
+                        type: 'network_error',
+                    })
+                }
+                throw error
+            }
+
+            // Otherwise, retry with exponential backoff
+            const waitTime = 1000 * Math.pow(2, attempt)
+            console.warn(`[API] Request failed (attempt ${attempt + 1}/${maxRetries + 1}). Retrying in ${waitTime}ms...`)
+            await new Promise(r => setTimeout(r, waitTime))
+        }
+    }
+
+    throw new Error('Max retries exceeded')
+}
+
+/**
  * Base fetch wrapper with error handling
+ * Uses retry logic with exponential backoff
  */
 export async function fetchApi<T>(
     endpoint: string,
     options: RequestInit = {}
 ): Promise<T> {
-    const url = `${API_BASE}${endpoint}`
-
-    const response = await fetch(url, {
-        credentials: 'include',
-        headers: {
-            'Content-Type': 'application/json',
-            ...options.headers,
-        },
-        ...options,
-    })
-
-    if (!response.ok) {
-        if (response.status === 401) {
-            // Redirect to login
-            window.location.href = '/ui/login.html'
-            throw new Error('Unauthorized')
-        }
-
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.message || error.detail || `Request failed: ${response.status}`)
-    }
-
-    // Handle empty responses
-    const text = await response.text()
-    if (!text) return {} as T
-
-    return JSON.parse(text)
+    return fetchWithRetry<T>(endpoint, options)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -111,14 +244,17 @@ export const chatApi = {
         conversationId?: string | null
         forceLocal?: boolean
         requestedModel?: string | null
+        persona?: string | null
         stream?: boolean
         styleProfile?: {
             tone?: string
             length?: string
             emojiLevel?: string
+            useMarkdown?: boolean
+            useCodeBlocks?: boolean
         }
         images?: string[]
-        imageSettings?: any // Pass settingsStore state
+        imageSettings?: any
     }): Promise<Response> {
         const response = await fetch(`${API_BASE}/user/chat`, {
             method: 'POST',
@@ -128,13 +264,15 @@ export const chatApi = {
                 message: params.message,
                 conversation_id: params.conversationId,
                 force_local: params.forceLocal || false,
-                requested_model: params.requestedModel,
+                model: params.requestedModel,
+                persona: params.persona || 'standard',
                 stream: params.stream ?? true,
-                // Map frontend style to backend format
                 style_profile: params.styleProfile ? {
                     tone: params.styleProfile.tone,
                     length: params.styleProfile.length,
-                    emoji_level: params.styleProfile.emojiLevel
+                    emoji_level: params.styleProfile.emojiLevel,
+                    use_markdown: params.styleProfile.useMarkdown ?? true,
+                    use_code_blocks: params.styleProfile.useCodeBlocks ?? true
                 } : null,
                 images: params.images,
                 image_settings: params.imageSettings
@@ -178,6 +316,9 @@ export const chatApi = {
             timestamp: new Date().toISOString(),
             conversationId,
             extra_metadata: m.extra_metadata as Message['extra_metadata'],
+            // Hydrate Glass Box data from metadata
+            reasoning_log: m.extra_metadata?.reasoning_log as any,
+            unified_sources: m.extra_metadata?.unified_sources as any,
         }))
     },
 
@@ -215,6 +356,8 @@ export const chatApi = {
         progress: number
         queue_position: number
         conversation_id?: string
+        image_url?: string
+        error?: string
     }> {
         return fetchApi(`/user/image/job/${jobId}/status`)
     },
@@ -444,9 +587,10 @@ export const imageApi = {
      */
     async getGallery(): Promise<{ images: UserImageOut[] }> {
         const result = await fetchApi<UserImageOut[]>('/user/images')
-        // Decode HTML entities in prompts (backend stores them escaped)
+        // Decode HTML entities in prompts and normalize URLs
         const decodedImages = result.map(img => ({
             ...img,
+            image_url: normalizeImageUrl(img.image_url),
             prompt: img.prompt ? decodeHtmlEntities(img.prompt) : img.prompt
         }))
         return { images: decodedImages }

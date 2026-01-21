@@ -13,17 +13,15 @@ Exports:
 
 from app.ai.prompts.compiler import build_system_prompt, get_persona_initial_message
 from app.ai.prompts.image_guard import (
-    FORBIDDEN_STYLE_TOKENS,
-    get_forbidden_tokens_in_prompt,
-    sanitize_image_prompt,
-    validate_prompt_minimal,
+    sanitize_user_content,
+    validate_style_tokens,
+    final_check,
 )
 
 __all__ = [
     "build_system_prompt",
     "get_persona_initial_message",
-    "sanitize_image_prompt",
-    "validate_prompt_minimal",
-    "get_forbidden_tokens_in_prompt",
-    "FORBIDDEN_STYLE_TOKENS",
+    "sanitize_user_content",
+    "validate_style_tokens",
+    "final_check",
 ]

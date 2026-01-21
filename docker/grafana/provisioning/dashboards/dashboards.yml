@@ -1,0 +1,17 @@
+# =============================================================================
+# Grafana Dashboard Provisioning Konfigürasyonu
+# =============================================================================
+# Dashboard'ları otomatik olarak yükle
+
+apiVersion: 1
+
+providers:
+  - name: 'Mami AI Dashboards'
+    orgId: 1
+    folder: 'Mami AI'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

@@ -19,13 +19,14 @@ import {
     ExportImport
 } from '@/components/common'
 import { OrchDebugPanel } from '@/components/chat/OrchDebugPanel'
-import { useIsMobile } from '@/hooks'
+import { useIsMobile, useAuth } from '@/hooks'
 import { cn } from '@/lib/utils'
 
 export function ChatLayout() {
     const isSidebarOpen = useChatStore((state) => state.isSidebarOpen)
     const branding = useBranding()
     const isMobile = useIsMobile()
+    const { logout } = useAuth()
     const showHeaderBrand = isMobile || !isSidebarOpen
 
     // Mobile drawer state
@@ -91,56 +92,46 @@ export function ChatLayout() {
         }
     }, [])
 
-    // COSMIC THEME CONSTANTS (Hardcoded for immediate impact)
-    const theme = {
-        bg: '#09090b',
-        glass: 'rgba(24, 24, 27, 0.4)',
-        accent: '#a855f7',
-        accentGlow: 'rgba(168, 85, 247, 0.25)',
-        textPrimary: '#ffffff',
-        textSecondary: '#71717a',
-        border: 'rgba(255, 255, 255, 0.05)',
-    };
-
     return (
         <div
-            className="flex h-full w-full relative overflow-hidden transition-colors duration-500"
-            style={{
-                backgroundColor: theme.bg,
-                color: theme.textPrimary,
-                '--accent': theme.accent,
-                '--border': theme.border,
-                '--bg-glass': theme.glass,
-            } as any}
+            className="flex h-full w-full relative overflow-hidden transition-colors duration-500 bg-(--color-bg) text-(--color-text)"
         >
-            {/* ALIVE BACKGROUND EFFECT */}
-            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+            {/* ALIVE BACKGROUND EFFECT - Dynamic Theme Colors */}
+            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden" style={{ perspective: '1000px', contain: 'strict' }}>
                 <motion.div
                     animate={{
-                        scale: [1, 1.1, 1],
-                        opacity: [0.05, 0.08, 0.05]
-                    }}
-                    transition={{
-                        duration: 8,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                    }}
-                    className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full blur-[120px]"
-                    style={{ backgroundColor: theme.accent }}
-                />
-                <motion.div
-                    animate={{
-                        scale: [1, 1.2, 1],
-                        opacity: [0.03, 0.06, 0.03]
+                        scale: [1, 1.25],
+                        opacity: [0.08, 0.25] // Reduced for subtlety
                     }}
                     transition={{
                         duration: 10,
                         repeat: Infinity,
-                        ease: "easeInOut",
-                        delay: 1
+                        repeatType: "reverse",
+                        ease: "easeInOut"
                     }}
-                    className="absolute bottom-[-20%] right-[-10%] w-[40%] h-[60%] rounded-full blur-[100px]"
-                    style={{ backgroundColor: '#3b82f6' }} // Secondary Blue Glow
+                    className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] rounded-full blur-[60px] md:blur-[140px] will-change-[transform,opacity]"
+                    style={{
+                        backgroundColor: 'var(--color-primary)',
+                        transform: 'translateZ(0)'
+                    }}
+                />
+                <motion.div
+                    animate={{
+                        scale: [1, 1.2],
+                        opacity: [0.05, 0.18] // Reduced for subtlety
+                    }}
+                    transition={{
+                        duration: 12,
+                        repeat: Infinity,
+                        repeatType: "reverse",
+                        ease: "easeInOut",
+                        delay: 2
+                    }}
+                    className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[70%] rounded-full blur-[50px] md:blur-[120px] will-change-[transform,opacity]"
+                    style={{
+                        backgroundColor: 'var(--color-secondary)',
+                        transform: 'translateZ(0)'
+                    }}
                 />
             </div>
 
@@ -152,8 +143,9 @@ export function ChatLayout() {
                             initial={{ width: 0, opacity: 0 }}
                             animate={{ width: 280, opacity: 1 }}
                             exit={{ width: 0, opacity: 0 }}
-                            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                            className="h-full border-r border-[var(--border)] bg-[var(--bg-glass)] backdrop-blur-3xl overflow-hidden flex-shrink-0 relative z-10"
+                            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                            className="h-full border-r border-(--color-border) backdrop-blur-lg md:backdrop-blur-3xl overflow-hidden flex-shrink-0 relative z-10"
+                            style={{ backgroundColor: 'var(--glass-bg)' }}
                         >
                             <Sidebar
                                 onMemoryOpen={handleMemoryOpen}
@@ -161,6 +153,7 @@ export function ChatLayout() {
                                 onSettingsOpen={handleSettingsOpen}
                                 onSearchOpen={handleSearchOpen}
                                 onExportOpen={handleExportOpen}
+                                onLogout={logout}
                             />
                         </motion.aside>
                     )}
@@ -181,6 +174,7 @@ export function ChatLayout() {
                         onSettingsOpen={handleSettingsOpen}
                         onSearchOpen={handleSearchOpen}
                         onExportOpen={handleExportOpen}
+                        onLogout={logout}
                     />
                 </MobileDrawer>
             )}

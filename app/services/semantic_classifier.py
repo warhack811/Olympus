@@ -211,15 +211,16 @@ async def analyze_message_semantics(message: str, now_iso: str | None = None) ->
     Hızlı model kullanarak performansı artırır.
     Hata durumunda güvenli varsayılan döner.
     """
+    from app.core.llm.governance import governance
+    
     payload = [
         {"role": "system", "content": SEMANTIC_SYSTEM_PROMPT},
         {"role": "user", "content": message},
     ]
 
-    # Hızlı model kullan (semantic analiz için büyük model gereksiz)
-    semantic_model = getattr(
-        settings, "GROQ_SEMANTIC_MODEL", getattr(settings, "GROQ_FAST_MODEL", settings.GROQ_DECIDER_MODEL)
-    )
+    # Governance'dan hızlı model zincirini al
+    chain = governance.get_model_chain("semantic")
+    semantic_model = chain[0] if chain else "llama-3.1-8b-instant"
 
     content, _ = await call_groq_api_safe_async(
         messages=payload,

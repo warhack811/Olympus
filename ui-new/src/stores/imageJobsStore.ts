@@ -30,6 +30,7 @@ interface ImageJobsState {
     getJobForMessage: (messageId: string) => ImageJob | null
     getActiveJobForConversation: (conversationId: string) => ImageJob | null
     clearCompleted: () => void
+    checkStuckJobs: () => void
 }
 
 // Callbacks for when a job completes
@@ -70,6 +71,7 @@ export const useImageJobsStore = create<ImageJobsState>()((set, get) => ({
                 completedAt: data.status === 'complete'
                     ? new Date().toISOString()
                     : existing?.completedAt,
+                lastActivityAt: Date.now(), // Phase 5: Activity tracking
             }
 
             // Create new jobs object (immutable update)
@@ -162,7 +164,44 @@ export const useImageJobsStore = create<ImageJobsState>()((set, get) => ({
             }
         })
     },
+
+    // Phase 5: Stuck-job guard
+    checkStuckJobs: () => {
+        set((state) => {
+            const STUCK_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+            const now: number = Date.now()
+            let changed: boolean = false
+            const newJobs = { ...state.jobs }
+
+            Object.keys(newJobs).forEach((id) => {
+                const job = newJobs[id]
+                const isActive: boolean = job.status === 'queued' || job.status === 'processing'
+                const lastActivity: number = job.lastActivityAt || now // Use now if lastActivityAt is missing
+
+                if (isActive && (now - lastActivity > STUCK_TIMEOUT_MS)) {
+                    console.warn('[Store] Marking job as stuck:', id)
+                    newJobs[id] = {
+                        ...job,
+                        status: 'error',
+                        error: 'İşlem zaman aşımına uğradı (Stuck Job Guard)',
+                        completedAt: new Date().toISOString(),
+                        lastActivityAt: now
+                    }
+                    changed = true
+                }
+            })
+
+            return changed ? { jobs: newJobs, lastUpdate: now } : state
+        })
+    }
 }))
+
+// Auto-check for stuck jobs every minute
+if (typeof window !== 'undefined') {
+    setInterval(() => {
+        useImageJobsStore.getState().checkStuckJobs()
+    }, 60000)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SELECTORS

@@ -22,7 +22,9 @@ Exception Hiyerarşisi:
     ├── DailyLimitError (429)
     ├── GroqAPIError (429)
     ├── ImageGenerationError (503)
-    └── FeatureDisabledError (503)
+    ├── FeatureDisabledError (503)
+    ├── DatabaseError (503)
+    └── ExternalServiceError (503)
 """
 
 
@@ -192,4 +194,67 @@ class ValidationError(MamiException):
             user_message=user_message or "Geçersiz giriş. Lütfen kontrol edip tekrar deneyin.",
             status_code=400,
         )
+
+
+class DatabaseError(MamiException):
+    """
+    Veritabanı hatası.
+
+    SQLite/SQLAlchemy bağlantı veya sorgu hatalarında fırlatılır.
+    HTTP 503 Service Unavailable döndürür.
+
+    Attributes:
+        retryable (bool): Hatanın retry edilebilir olup olmadığı
+
+    Example:
+        >>> raise DatabaseError("Connection timeout", retryable=True)
+    """
+
+    def __init__(self, message: str, retryable: bool = True, user_message: str | None = None):
+        self.retryable = retryable
+        super().__init__(
+            message=message,
+            user_message=user_message or "Veritabanı hatası oluştu. Lütfen tekrar deneyin.",
+            status_code=503,
+        )
+
+
+class ExternalServiceError(MamiException):
+    """
+    Dış servis hatası.
+
+    Redis, ChromaDB, Neo4j gibi dış servislerin bağlantı veya işlem
+    hatalarında fırlatılır. HTTP 503 Service Unavailable döndürür.
+
+    Attributes:
+        service (str): Hata veren servis adı (örn: "redis", "chromadb")
+        retryable (bool): Hatanın retry edilebilir olup olmadığı
+        retry_after (int | None): Retry için beklenecek süre (saniye)
+
+    Example:
+        >>> raise ExternalServiceError(
+        ...     service="redis",
+        ...     message="Connection lost",
+        ...     retryable=True,
+        ...     retry_after=60
+        ... )
+    """
+
+    def __init__(
+        self,
+        service: str,
+        message: str,
+        retryable: bool = True,
+        retry_after: int | None = None,
+        user_message: str | None = None,
+    ):
+        self.service = service
+        self.retryable = retryable
+        self.retry_after = retry_after
+        super().__init__(
+            message=f"{service}: {message}",
+            user_message=user_message or f"{service.capitalize()} servisi şu an yanıt vermiyor. Lütfen tekrar deneyin.",
+            status_code=503,
+        )
+
 

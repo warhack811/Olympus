@@ -82,13 +82,9 @@ class WorkingMemory:
     
     @classmethod
     def _get_config(cls) -> tuple[int, int]:
-        """TTL ve max_messages değerlerini döndürür."""
-        try:
-            from app.config import get_settings
-            s = get_settings()
-            return s.ORCH_WORKING_MEMORY_TTL, s.ORCH_WORKING_MEMORY_MAX_MESSAGES
-        except Exception:
-            return 172800, 10  # 48 saat, 10 mesaj (safe default)
+        """TTL ve max_messages değerlerini döndürür (legacy ORCH_* kaldırıldı)."""
+        # Eski ORCH_WORKING_MEMORY_* ayarları kaldırıldı; sabit güvenli değerler kullanılıyor.
+        return 172800, 10  # 48 saat, 10 mesaj (safe default)
     
     @classmethod
     def _get_ttl(cls) -> int:
@@ -126,7 +122,10 @@ class WorkingMemory:
         
         client = await get_redis()
         if client is None:
-            logger.debug(f"[WM] Redis yok, boş liste dönüyor (user={user_id})")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Redis yok, boş liste dönüyor (user={user_id})")
             return []
         
         try:
@@ -147,7 +146,7 @@ class WorkingMemory:
             return messages
             
         except Exception as e:
-            logger.error(f"[WM] Mesaj okuma hatası: {e}")
+            logger.error(f"[WM] Mesaj okuma hatası: {e}", exc_info=True)
             return []
     
     @classmethod
@@ -174,7 +173,10 @@ class WorkingMemory:
         
         client = await get_redis()
         if client is None:
-            logger.debug(f"[WM] Redis yok, mesaj kaydedilmedi (user={user_id})")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Redis yok, mesaj kaydedilmedi (user={user_id})")
             return False
         
         try:
@@ -198,11 +200,14 @@ class WorkingMemory:
                 pipe.expire(key, ttl)
                 await pipe.execute()
             
-            logger.debug(f"[WM] Mesaj eklendi: user={user_id}, role={role}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Mesaj eklendi: user={user_id}, role={role}")
             return True
             
         except Exception as e:
-            logger.error(f"[WM] Mesaj ekleme hatası: {e}")
+            logger.error(f"[WM] Mesaj ekleme hatası: {e}", exc_info=True)
             return False
     
     @classmethod
@@ -217,10 +222,13 @@ class WorkingMemory:
         try:
             key = WorkingMemoryKeys.messages(user_id)
             await client.delete(key)
-            logger.debug(f"[WM] Mesajlar silindi: user={user_id}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Mesajlar silindi: user={user_id}")
             return True
         except Exception as e:
-            logger.error(f"[WM] Mesaj silme hatası: {e}")
+            logger.error(f"[WM] Mesaj silme hatası: {e}", exc_info=True)
             return False
     
     # ==========================================================================
@@ -246,7 +254,7 @@ class WorkingMemory:
             summary = await client.get(key)
             return summary
         except Exception as e:
-            logger.error(f"[WM] Özet okuma hatası: {e}")
+            logger.error(f"[WM] Özet okuma hatası: {e}", exc_info=True)
             return None
     
     @classmethod
@@ -282,10 +290,13 @@ class WorkingMemory:
             else:
                 await client.set(key, summary)
                 
-            logger.debug(f"[WM] Özet güncellendi: user={user_id}, len={len(summary)}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Özet güncellendi: user={user_id}, len={len(summary)}")
             return True
         except Exception as e:
-            logger.error(f"[WM] Özet güncelleme hatası: {e}")
+            logger.error(f"[WM] Özet güncelleme hatası: {e}", exc_info=True)
             return False
     
     # ==========================================================================
@@ -325,15 +336,19 @@ class WorkingMemory:
             key = WorkingMemoryKeys.rag_cache(user_id, query_hash)
             
             cached = await client.get(key)
+            from app.config import get_settings
+            settings = get_settings()
             if cached:
-                logger.debug(f"[WM] RAG cache HIT: user={user_id}, hash={query_hash}")
+                if settings.DEBUG:
+                    logger.debug(f"[WM] RAG cache HIT: user={user_id}, hash={query_hash}")
                 return json.loads(cached)
             
-            logger.debug(f"[WM] RAG cache MISS: user={user_id}, hash={query_hash}")
+            if settings.DEBUG:
+                logger.debug(f"[WM] RAG cache MISS: user={user_id}, hash={query_hash}")
             return None
             
         except Exception as e:
-            logger.error(f"[WM] RAG cache okuma hatası: {e}")
+            logger.error(f"[WM] RAG cache okuma hatası: {e}", exc_info=True)
             return None
     
     @classmethod
@@ -368,11 +383,14 @@ class WorkingMemory:
             cache_ttl = ttl or 3600  # 1 saat varsayılan
             
             await client.setex(key, cache_ttl, json.dumps(results, ensure_ascii=False))
-            logger.debug(f"[WM] RAG cached: user={user_id}, hash={query_hash}, ttl={cache_ttl}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] RAG cached: user={user_id}, hash={query_hash}, ttl={cache_ttl}")
             return True
             
         except Exception as e:
-            logger.error(f"[WM] RAG cache yazma hatası: {e}")
+            logger.error(f"[WM] RAG cache yazma hatası: {e}", exc_info=True)
             return False
     
     # ==========================================================================
@@ -406,10 +424,13 @@ class WorkingMemory:
                 pipe.expire(key, ttl)
                 await pipe.execute()
                 
-            logger.debug(f"[WM] Fact eklendi: user={user_id}, fact={fact[:50]}")
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(f"[WM] Fact eklendi: user={user_id}, fact={fact[:50]}")
             return True
         except Exception as e:
-            logger.error(f"[WM] Fact ekleme hatası: {e}")
+            logger.error(f"[WM] Fact ekleme hatası: {e}", exc_info=True)
             return False
     
     @classmethod
@@ -431,7 +452,7 @@ class WorkingMemory:
             facts = await client.smembers(key)
             return list(facts)
         except Exception as e:
-            logger.error(f"[WM] Facts okuma hatası: {e}")
+            logger.error(f"[WM] Facts okuma hatası: {e}", exc_info=True)
             return []
     
     # ==========================================================================
@@ -469,7 +490,7 @@ class WorkingMemory:
             logger.info(f"[WM] Tüm veriler silindi: user={user_id}, count={deleted}")
             return True
         except Exception as e:
-            logger.error(f"[WM] Toplu silme hatası: {e}")
+            logger.error(f"[WM] Toplu silme hatası: {e}", exc_info=True)
             return False
     
     @classmethod
@@ -500,7 +521,7 @@ class WorkingMemory:
             
             return True
         except Exception as e:
-            logger.error(f"[WM] TTL yenileme hatası: {e}")
+            logger.error(f"[WM] TTL yenileme hatası: {e}", exc_info=True)
             return False
 
 

@@ -84,29 +84,49 @@ export function MobileDrawer({
                         initial={{ x: side === 'left' ? '-100%' : '100%' }}
                         animate={{ x: 0 }}
                         exit={{ x: side === 'left' ? '-100%' : '100%' }}
-                        transition={{ type: 'spring', damping: 30, stiffness: 400 }}
+                        transition={{ type: 'spring', damping: 30, stiffness: 350 }}
                         drag="x"
+                        dragDirectionLock
                         dragControls={dragControls}
                         dragConstraints={{
-                            left: side === 'left' ? -280 : 0,
-                            right: side === 'left' ? 0 : 280
+                            left: side === 'left' ? -300 : 0,
+                            right: side === 'left' ? 0 : 300
                         }}
                         dragElastic={0.1}
-                        onDragEnd={handleDragEnd}
+                        dragMomentum={true}
+                        onDragEnd={(event, info) => {
+                            const offset = info.offset.x
+                            const velocity = info.velocity.x
+                            // Much more intentional thresholds to avoid accidental closing during list scrolling
+                            const threshold = 100
+                            const velocityThreshold = 400
+
+                            if (side === 'left') {
+                                if (offset < -threshold || velocity < -velocityThreshold) {
+                                    onClose()
+                                }
+                            } else {
+                                if (offset > threshold || velocity > velocityThreshold) {
+                                    onClose()
+                                }
+                            }
+                        }}
                         className={cn(
-                            "fixed top-0 bottom-0 z-(--z-modal)",
+                            "fixed top-0 bottom-0 z-(--z-modal) overflow-hidden",
                             "w-[280px] max-w-[85vw]",
-                            "bg-(--color-bg-surface) border-(--color-border)",
-                            "flex flex-col safe-area-top safe-area-bottom",
+                            "backdrop-blur-xl border-(--color-border)",
+                            "flex flex-col safe-area-top safe-area-bottom will-change-transform",
                             side === 'left'
                                 ? "left-0 border-r rounded-r-2xl"
                                 : "right-0 border-l rounded-l-2xl"
                         )}
+                        style={{ backgroundColor: 'var(--glass-bg)' }}
                     >
                         {/* Drag Handle */}
                         <div
                             onPointerDown={(e) => dragControls.start(e)}
                             className={cn(
+                                "hidden", // Hidden - users can use swipe gesture instead
                                 "absolute top-1/2 -translate-y-1/2 w-1 h-16 rounded-full",
                                 "bg-(--color-text-muted)/30 cursor-grab active:cursor-grabbing",
                                 side === 'left' ? "right-2" : "left-2"
@@ -124,7 +144,7 @@ export function MobileDrawer({
                         )}
 
                         {/* Content */}
-                        <div className="flex-1 overflow-y-auto scrollbar-thin">
+                        <div className="flex-1 overflow-hidden">
                             {children}
                         </div>
                     </motion.div>

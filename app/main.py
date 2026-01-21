@@ -20,6 +20,8 @@ veya eski yol (hala çalışır):
 """
 
 import sys
+import os
+import logging
 from pathlib import Path
 from time import perf_counter
 
@@ -46,7 +48,9 @@ from app.core.database import init_database_with_defaults
 from app.core.exceptions import MamiException
 
 # Core modüller
-from app.core.logger import get_logger, log_request, log_response
+from app.core.logger import get_logger, log_request, log_response, log_error, set_request_id, clear_request_id
+from app.core.metrics import record_request_metrics, record_error_metrics
+from app.core.health_monitor import start_health_monitor, stop_health_monitor, record_endpoint_metric
 from app.memory.conversation import set_user_resolver as set_conv_user_resolver
 from app.memory.store import set_user_resolver as set_memory_user_resolver
 
@@ -55,6 +59,11 @@ from app.memory.store import set_user_resolver as set_memory_user_resolver
 # =============================================================================
 
 settings = get_settings()
+from app.core.logger import get_logger, configure_root_logger
+
+# Root logger yapılandırması (Kütüphane logları ve genel çıktı için)
+configure_root_logger(logging.INFO)
+
 logger = get_logger(__name__)
 
 # =============================================================================
@@ -73,7 +82,118 @@ set_memory_user_resolver(_resolve_user_id)
 set_conv_user_resolver(_resolve_user_id)
 
 # =============================================================================
-# FASTAPI UYGULAMASI
+# STARTUP INIT (Module Level - runs once on import)
+# =============================================================================
+
+# Database init (sync, runs on module load)
+logger.info("Initializing database...")
+from app.core.database import init_database_with_defaults
+init_database_with_defaults()
+
+# Maintenance Scheduler (sync, daemon thread)
+if os.getenv("ENABLE_SCHEDULER", "true").lower() == "true":
+    from app.core.maintenance import start_maintenance_scheduler
+    start_maintenance_scheduler()
+    logger.info("Maintenance scheduler started")
+
+# =============================================================================
+# LIFESPAN CONTEXT (ONLY async tasks)
+# =============================================================================
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan - ONLY async background tasks"""
+    import asyncio
+    
+    logger.info("Application starting...")
+    
+    # Health Monitor başlat
+    try:
+        await start_health_monitor()
+        logger.info("Health monitor başlatıldı")
+    except Exception as e:
+        logger.error(f"Health monitor başlatılamadı: {e}", exc_info=True)
+    
+    # Alert Manager başlat
+    try:
+        from app.core.alerting import start_alert_manager
+        await start_alert_manager()
+        logger.info("Alert manager başlatıldı")
+    except Exception as e:
+        logger.error(f"Alert manager başlatılamadı: {e}", exc_info=True)
+    
+    # Redis Bridge for WebSocket image progress
+    try:
+        from app.core.websockets import start_redis_bridge
+        
+        bridge_task = asyncio.create_task(start_redis_bridge())
+        
+        def bridge_error_handler(task):
+            try:
+                task.result()
+            except Exception as e:
+                logger.error(f"Redis Bridge error: {e}", exc_info=True)
+        
+        bridge_task.add_done_callback(bridge_error_handler)
+        logger.info("Redis WebSocket bridge started")
+        
+    except Exception as e:
+        logger.error(f"Failed to start Redis bridge: {e}", exc_info=True)
+
+    # RAG FTS initialization
+    try:
+        from app.services.brain.rag_fts import init_rag_fts
+        asyncio.create_task(init_rag_fts())
+    except ImportError:
+        pass  # RAG FTS optional
+    except Exception as e:
+        logger.error(f"RAG FTS initialization error: {e}")
+
+    # Startup Checks
+    try:
+        from app.auth.user_manager import ensure_default_admin
+        from app.auth.invite_manager import ensure_initial_invite
+        
+        await ensure_default_admin()
+        await ensure_initial_invite()
+        logger.info("Startup checks completed (Admin & Invites)")
+    except Exception as e:
+        logger.error(f"Startup check failed: {e}")
+
+    logger.info("Application ready")
+    
+    yield  # App runs
+    
+    logger.info("Application shutting down...")
+    
+    # Analytics Tracker'ı kapat (pending event'leri flush et)
+    try:
+        from app.core.analytics import get_analytics_tracker
+        tracker = get_analytics_tracker()
+        tracker.shutdown()
+        logger.info("Analytics tracker kapatıldı")
+    except Exception as e:
+        logger.error(f"Analytics tracker kapatılırken hata: {e}", exc_info=True)
+    
+    # Health Monitor'ı durdur
+    try:
+        await stop_health_monitor()
+        logger.info("Health monitor durduruldu")
+    except Exception as e:
+        logger.error(f"Health monitor durdurulurken hata: {e}", exc_info=True)
+    
+    # Alert Manager'ı durdur
+    try:
+        from app.core.alerting import stop_alert_manager
+        await stop_alert_manager()
+        logger.info("Alert manager durduruldu")
+    except Exception as e:
+        logger.error(f"Alert manager durdurulurken hata: {e}", exc_info=True)
+
+# =============================================================================
+# FASTAPI UYGULAMASI (with lifespan)
 # =============================================================================
 
 app = FastAPI(
@@ -84,6 +204,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,  # MODERN LIFESPAN
 )
 
 # =============================================================================
@@ -109,26 +230,134 @@ app.add_middleware(
 )
 
 
-# Basit istek loglamasi (mami.log ve console)
+# Request logging middleware - JSON formatında yapılandırılmış logging
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
+    """
+    HTTP isteklerini ve yanıtlarını JSON formatında log'lar ve metrikleri toplar.
+    
+    Özellikler:
+    - Request ID (correlation ID) oluşturur ve tracking'i sağlar
+    - Request başlangıcında request bilgilerini log'lar
+    - Response tamamlandığında response bilgilerini log'lar
+    - Hata durumunda error bilgilerini log'lar
+    - Performance timing'i ölçer (request duration)
+    - Prometheus metrikleri toplar:
+      * Request duration histogram'ına ekle
+      * Request count counter'ını artır
+      * Error count counter'ını artır (hata durumunda)
+    """
+    import uuid
+    
     start = perf_counter()
     user = None
+    request_id = None
+    
     try:
-        user = get_username_from_request(request)
-    except Exception:
-        pass
+        # Request ID oluştur ve ayarla (correlation ID)
+        request_id = str(uuid.uuid4())[:8]
+        set_request_id(request_id)
+        
+        # Kullanıcı bilgisini al (varsa)
+        try:
+            user = get_username_from_request(request)
+        except Exception:
+            pass
 
-    log_request(logger, request.method, request.url.path, user=user)
-    try:
-        response = await call_next(request)
-    except Exception:
+        # Request'i log'la
+        log_request(
+            logger,
+            request.method,
+            request.url.path,
+            user=user,
+            headers={"content-type": request.headers.get("content-type", "")},
+            query_params=dict(request.query_params) if request.query_params else None,
+            extra={"request_id": request_id}
+        )
+        
+        # Request'i işle
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # Hata durumunda error logging
+            duration_ms = (perf_counter() - start) * 1000
+            duration_seconds = duration_ms / 1000
+            
+            log_error(
+                logger,
+                f"İstek işlenirken hata oluştu: {str(exc)}",
+                error_type=type(exc).__name__,
+                user=user,
+                path=request.url.path,
+                extra={
+                    "request_id": request_id,
+                    "duration_ms": duration_ms,
+                    "method": request.method,
+                },
+                exc_info=True
+            )
+            
+            # Hata metriklerini kaydet
+            record_error_metrics(
+                method=request.method,
+                endpoint=request.url.path,
+                error_type=type(exc).__name__,
+            )
+            
+            # Health monitor'a metrik kaydet (error)
+            record_endpoint_metric(
+                endpoint=request.url.path,
+                method=request.method,
+                status_code=500,
+                duration_seconds=duration_seconds,
+                error=str(exc),
+            )
+            
+            clear_request_id()
+            raise
+        
+        # Response'u log'la
         duration_ms = (perf_counter() - start) * 1000
-        logger.error(f"[RESPONSE] status=500 duration={duration_ms:.2f}ms path={request.url.path}")
-        raise
-    duration_ms = (perf_counter() - start) * 1000
-    log_response(logger, response.status_code, duration_ms, extra={"path": request.url.path})
-    return response
+        duration_seconds = duration_ms / 1000
+        
+        log_response(
+            logger,
+            response.status_code,
+            duration_ms,
+            user=user,
+            path=request.url.path,
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "content_type": response.headers.get("content-type", ""),
+            }
+        )
+        
+        # Metrikleri kaydet (Prometheus)
+        # 1. Request duration histogram'ına ekle
+        # 2. Request count counter'ını artır
+        # 3. Status code'u counter'a ekle
+        record_request_metrics(
+            method=request.method,
+            endpoint=request.url.path,
+            status_code=response.status_code,
+            duration_seconds=duration_seconds,
+        )
+        
+        # Health monitor'a metrik kaydet
+        record_endpoint_metric(
+            endpoint=request.url.path,
+            method=request.method,
+            status_code=response.status_code,
+            duration_seconds=duration_seconds,
+            error=None,
+        )
+        
+        return response
+        
+    finally:
+        # Request ID'sini temizle
+        clear_request_id()
 
 
 # =============================================================================
@@ -139,17 +368,27 @@ BASE_DIR = project_root
 # UI_DIR artık yeni React build çıktısını (dist) gösteriyor
 UI_DIR = BASE_DIR / "ui-new" / "dist"
 IMAGES_DIR = BASE_DIR / "data" / "images"
+UPLOADS_DIR = BASE_DIR / "data" / "uploads"
 
 # Dizinleri oluştur
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mount static files
 # /assets -> Vite tarafından üretilen JS/CSS dosyaları
 if (UI_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(UI_DIR / "assets")), name="assets")
 
-# /images -> Kullanıcı yüklemeleri
-app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+# /images -> Kullanıcı yüklemeleri (CORS Enabled for Cross-Domain Downloads)
+class ImageStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        return response
+
+app.mount("/images", ImageStaticFiles(directory=str(IMAGES_DIR)), name="images")
+app.mount("/uploads", ImageStaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # =============================================================================
 # EXCEPTION HANDLERS
@@ -173,62 +412,7 @@ async def mami_exception_handler(request: Request, exc: MamiException):
 
 
 # =============================================================================
-# LIFECYCLE EVENTS
-# =============================================================================
-
-
-@app.on_event("startup")
-async def on_startup():
-    """Uygulama başlangıcında çalışır."""
-    logger.info("=" * 50)
-    logger.info("Mami AI v4.2 (New UI) başlatılıyor...")
-    logger.info("=" * 50)
-
-    # 1. Veritabanı ve varsayılan config'leri yükle
-    init_database_with_defaults()
-
-    # 2. Varsayılan admin oluştur
-    ensure_default_admin()
-
-    # 3. İlk davet kodunu oluştur
-    invite = ensure_initial_invite()
-    logger.info(f"Test için davet kodu: {invite.code}")
-
-    # 4. Bakım görevlerini başlat
-    try:
-        from app.core.maintenance import start_maintenance_scheduler
-
-        start_maintenance_scheduler()
-    except ImportError:
-        pass
-
-    try:
-        from app.core.dynamic_config import config_service
-
-        config_service.get_category("system")
-    except Exception:
-        pass
-
-    # 5. RAG v2 FTS tablosunu başlat
-    try:
-        from app.memory.rag_v2_lexical import init_fts
-
-        init_fts()
-        logger.info("RAG v2 FTS tablosu hazır.")
-    except Exception as e:
-        logger.warning(f"RAG v2 FTS init hatası: {e}")
-
-    logger.info("Mami AI hazır!")
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    """Uygulama kapanırken çalışır."""
-    logger.info("Mami AI kapatılıyor...")
-
-
-# =============================================================================
-# WEBSOCKET
+# ROUTES (old on_event removed, using lifespan now)
 # =============================================================================
 
 from http.cookies import SimpleCookie
@@ -242,11 +426,10 @@ from app.core.websockets import connected
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket bağlantı endpoint'i - username ile kayıt yapar."""
+    from app.core.websockets import register_connection, unregister_connection
     await ws.accept()
 
-    # Cookie'den session token al ve kullanıcı bul
-    username = "anonymous"
+    user = None
     try:
         # WebSocket'te cookies'e scope üzerinden erişim
         cookies = {}
@@ -259,21 +442,26 @@ async def websocket_endpoint(ws: WebSocket):
                 break
 
         token = cookies.get(SESSION_COOKIE_NAME)
-        logger.info(f"[WEBSOCKET] Cookie token: {token[:20] if token else 'None'}...")
+        if not token:
+            logger.warning("[WEBSOCKET] Attempt without session cookie. Closing.")
+            await ws.close(code=1008) # Policy Violation
+            return
 
-        if token:
-            user = get_user_from_session_token(token)
-            if user:
-                username = user.username
-                logger.info(f"[WEBSOCKET] User resolved: {username}")
+        user = get_user_from_session_token(token)
+        if not user:
+            logger.warning(f"[WEBSOCKET] Invalid token: {token[:8]}... Closing.")
+            await ws.close(code=1008)
+            return
+            
+        # Success: Register connection
+        register_connection(ws, user.id, user.username)
+        logger.info(f"[WEBSOCKET] Authenticated user: {user.username}")
+            
     except Exception as e:
-        logger.error(f"[WEBSOCKET] Username alınamadı: {e}")
+        logger.error(f"WebSocket authentication failed: {e}")
 
-    # Dict olarak kaydet: {ws: username}
-    connected[ws] = username
-    logger.info(
-        f"[WEBSOCKET] Yeni bağlantı: {username}, toplam: {len(connected)}, all_users: {list(connected.values())}"
-    )
+    username = user.username if user else "anonymous"
+    logger.info(f"[WEBSOCKET] Yeni bağlantı: {username}")
 
     try:
         while True:
@@ -281,9 +469,8 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception as e:
         logger.debug(f"[WEBSOCKET] Bağlantı kapandı ({username}): {e}")
     finally:
-        if ws in connected:
-            del connected[ws]
-        logger.info(f"[WEBSOCKET] Bağlantı kaldırıldı: {username}, kalan: {len(connected)}")
+        unregister_connection(ws)
+        logger.info(f"[WEBSOCKET] Bağlantı kaldırıldı: {username}")
 
 
 # =============================================================================
@@ -300,7 +487,7 @@ from app.api import (
 
 # from app.api import user_routes  # DEPRECATED - Moved to app/api/routes/*
 # New modular routes
-from app.api.routes import chat, documents, images, memories, preferences
+from app.api.routes import analytics, chat, documents, images, memories, preferences
 
 # API v1 (Yeni standart yol)
 app.include_router(auth_routes.router, prefix="/api/v1/auth", tags=["v1-auth"])
@@ -311,6 +498,7 @@ app.include_router(memories.router, prefix="/api/v1/user", tags=["v1-memories"])
 app.include_router(documents.router, prefix="/api/v1/user", tags=["v1-documents"])
 app.include_router(images.router, prefix="/api/v1/user", tags=["v1-images"])
 app.include_router(preferences.router, prefix="/api/v1/user", tags=["v1-preferences"])
+app.include_router(analytics.router, prefix="/api/v1/user", tags=["v1-analytics"])
 app.include_router(admin_routes.router, prefix="/api/v1/admin", tags=["v1-admin"])
 app.include_router(system_routes.router, prefix="/api/v1/system", tags=["v1-system"])
 app.include_router(admin_api_keys.router, prefix="/api/v1/admin", tags=["v1-admin"])  # Route Prefix aynı (admin)
@@ -324,6 +512,7 @@ app.include_router(memories.router, prefix="/api/user", include_in_schema=False)
 app.include_router(documents.router, prefix="/api/user", include_in_schema=False)
 app.include_router(images.router, prefix="/api/user", include_in_schema=False)
 app.include_router(preferences.router, prefix="/api/user", include_in_schema=False)
+app.include_router(analytics.router, prefix="/api/user", include_in_schema=False)
 app.include_router(admin_routes.router, prefix="/api/admin", include_in_schema=False)
 app.include_router(system_routes.router, prefix="/api/system", include_in_schema=False)
 
@@ -376,3 +565,4 @@ async def serve_spa(request: Request, path: str):
 # reload_live_trace
 # reload_live_trace_2
 # reload_live_trace_3
+# Trigger reload

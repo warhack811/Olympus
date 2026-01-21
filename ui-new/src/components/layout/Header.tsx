@@ -22,8 +22,8 @@ export function Header({ title, onMenuClick, onSearchClick, showBrand = true }: 
     return (
         <header className={cn(
             "h-15 px-4 flex items-center justify-between",
-            "border-b border-(--color-border)",
-            "bg-(--color-bg)/80 backdrop-blur-xl",
+            "border-b border-(--color-border)/50",
+            "bg-(--color-bg-surface)/10 backdrop-blur-2xl",
             "sticky top-0 z-10 safe-area-top"
         )}>
             {/* Left */}
@@ -41,9 +41,7 @@ export function Header({ title, onMenuClick, onSearchClick, showBrand = true }: 
                 {/* Title with icon */}
                 {showBrand && (
                     <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-(--gradient-brand) flex items-center justify-center">
-                            <Sparkles className="h-4 w-4 text-white" />
-                        </div>
+                        <Sparkles className="h-5 w-5" style={{ color: 'var(--color-primary)' }} />
                         <h1 className="font-display font-semibold hidden sm:block">{title}</h1>
                     </div>
                 )}

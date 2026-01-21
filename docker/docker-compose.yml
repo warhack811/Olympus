@@ -22,31 +22,30 @@ services:
       dockerfile: Dockerfile
     container_name: mami-ai
     restart: unless-stopped
-    
+
     ports:
       - "8000:8000"
-    
+
     env_file:
       - .env
-    
+
     environment:
       - PYTHONPATH=/app
-    
+
     volumes:
       # Kalıcı veri dizinleri
       - ./data:/app/data
       - ./logs:/app/logs
-      
       # Geliştirme için kaynak kod (opsiyonel, yorum satırından çıkarın)
       # - .:/app
-    
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    
+
     networks:
       - mami-network
 
@@ -76,10 +75,171 @@ services:
   #   networks:
   #     - mami-network
 
+  # --- ATLAS INFRASTRUCTURE ---
+  redis:
+    image: redis:7-alpine
+    container_name: atlas_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mami-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: atlas_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:6333/readyz || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - mami-network
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: atlas_neo4j
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - mami-network
+
+  # ---------------------------------------------------------------------------
+  # Logging & Monitoring Infrastructure
+  # ---------------------------------------------------------------------------
+  
+  # Elasticsearch - Merkezi log depolama ve arama
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: mami-elasticsearch
+    restart: unless-stopped
+    
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    
+    environment:
+      # Tek node cluster konfigürasyonu
+      - discovery.type=single-node
+      # Güvenlik ayarları (geliştirme için devre dışı)
+      - xpack.security.enabled=false
+      # Bellek ayarları
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - mami-network
+  
+  # Prometheus - Metrik toplama ve depolama
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mami-prometheus
+    restart: unless-stopped
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      # Prometheus konfigürasyon dosyası
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Alert rules dosyası
+      - ./docker/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      # Prometheus veri depolama
+      - prometheus_data:/prometheus
+    
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    networks:
+      - mami-network
+  
+  # Grafana - Metrik görselleştirme ve dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mami-grafana
+    restart: unless-stopped
+    
+    ports:
+      - "3000:3000"
+    
+    environment:
+      # Admin kullanıcı ayarları
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Anonim erişim
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      # Plugin'ler
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    
+    volumes:
+      # Grafana veri depolama
+      - grafana_data:/var/lib/grafana
+      # Provisioning konfigürasyonları
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    networks:
+      - mami-network
+    
+    depends_on:
+      - prometheus
+
 networks:
   mami-network:
     driver: bridge
 
 volumes:
   ollama-data:
+  redis_data:
+  qdrant_data:
+  neo4j_data:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:
+
 

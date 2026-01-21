@@ -31,15 +31,26 @@ export function CodeBlock({ code, language = 'plaintext', className }: CodeBlock
     }
 
     return (
-        <div className={cn(
-            "relative group rounded-xl overflow-hidden",
-            "bg-[#1e1e2e] border border-[#313244]",
-            "my-3",
-            className
-        )}>
+        <div
+            className={cn(
+                "relative group rounded-xl overflow-hidden my-4",
+                className
+            )}
+            style={{
+                backgroundColor: 'var(--color-code-bg)',
+                borderColor: 'var(--color-code-border)',
+                borderWidth: '1px'
+            }}
+        >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2 bg-[#181825] border-b border-[#313244]">
-                <span className="text-xs font-medium text-[#cdd6f4]">
+            <div
+                className="flex items-center justify-between px-4 py-2 border-b"
+                style={{
+                    backgroundColor: 'var(--color-code-surface)',
+                    borderBottomColor: 'var(--color-code-border)'
+                }}
+            >
+                <span className="text-xs font-medium" style={{ color: 'var(--color-code-text)' }}>
                     {displayLang}
                 </span>
 
@@ -50,8 +61,12 @@ export function CodeBlock({ code, language = 'plaintext', className }: CodeBlock
                         "transition-all duration-200",
                         copied
                             ? "bg-green-500/20 text-green-400"
-                            : "bg-[#313244] text-[#a6adc8] hover:bg-[#45475a] hover:text-[#cdd6f4]"
+                            : ""
                     )}
+                    style={copied ? {} : {
+                        backgroundColor: 'var(--color-code-border)',
+                        color: 'var(--color-code-comment)'
+                    }}
                     whileTap={{ scale: 0.95 }}
                 >
                     {copied ? (

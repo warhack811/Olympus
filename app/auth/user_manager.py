@@ -335,9 +335,9 @@ def ensure_default_admin():
     """
     get_session, User, _ = _get_imports()
 
-    # Hardcoded admin bilgileri (sadece ilk kurulum için)
-    ADMIN_USERNAME = "admin"
-    ADMIN_PASSWORD = "admin"
+    settings = _get_settings()
+    ADMIN_USERNAME = settings.ADMIN_USERNAME
+    ADMIN_PASSWORD = settings.ADMIN_PASSWORD
 
     with get_session() as session:
         # Kullanıcı sayısını kontrol et
@@ -359,4 +359,5 @@ def ensure_default_admin():
                 return None
 
         return None
+
 

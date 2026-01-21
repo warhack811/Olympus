@@ -1,0 +1,75 @@
+# =============================================================================
+# Prometheus Konfigürasyonu
+# =============================================================================
+# Metrik toplama, alert kuralları ve retention policy'si
+
+global:
+  # Metrik toplama aralığı (varsayılan)
+  scrape_interval: 15s
+  # Evaluation aralığı (alert kuralları için)
+  evaluation_interval: 15s
+  # Dış sistemlere gönderilen timeout
+  external_labels:
+    monitor: 'mami-ai-monitor'
+    environment: 'production'
+
+# Retention policy - metrikleri 30 gün sakla
+# Docker-compose.yml'de --storage.tsdb.retention.time=30d parametresi ile ayarlanmış
+
+# Alert kuralları dosyası
+rule_files:
+  - '/etc/prometheus/alert_rules.yml'
+
+# Scrape konfigürasyonları
+scrape_configs:
+  # Prometheus kendisini monitor etme
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Mami AI backend uygulaması
+  - job_name: 'mami-ai'
+    static_configs:
+      - targets: ['mami-ai:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    # Retry mekanizması
+    scrape_protocols:
+      - OpenMetricsText1.0.0
+      - OpenMetricsText0.0.1
+      - PrometheusText1.0.0
+      - PrometheusText0.0.4
+
+  # Elasticsearch monitoring
+  - job_name: 'elasticsearch'
+    static_configs:
+      - targets: ['elasticsearch:9200']
+    metrics_path: '/_prometheus/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Redis monitoring (redis-exporter gerekli)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+  #   scrape_interval: 15s
+  #   scrape_timeout: 10s
+
+  # Node exporter (sistem metrikleri)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+  #   scrape_interval: 15s
+  #   scrape_timeout: 10s
+
+# Alertmanager konfigürasyonu (opsiyonel)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#             - 'alertmanager:9093'
+#       scheme: http
+#       timeout: 10s

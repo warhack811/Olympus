@@ -1,12 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import typography from '@tailwindcss/typography'
 import path from 'path'
 
 export default defineConfig({
   plugins: [
     react(),
-    tailwindcss()
+    tailwindcss({
+      config: {
+        plugins: [typography],
+      }
+    })
   ],
   base: '/',
   resolve: {
@@ -14,4 +19,34 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: true,
+    strictPort: true,
+    hmr: {
+      host: 'localhost',
+      port: 5173,
+      protocol: 'ws',
+      overlay: false,  // Don't show error overlay on mobile
+    },
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'http://127.0.0.1:8000',
+        ws: true,
+      },
+      '/images': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      }
+    }
+  }
 })

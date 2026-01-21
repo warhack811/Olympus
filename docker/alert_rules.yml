@@ -1,0 +1,219 @@
+# =============================================================================
+# Prometheus Alert Kuralları
+# =============================================================================
+# Sistem sağlığı ve performans için alert kuralları
+
+groups:
+  - name: mami_ai_alerts
+    interval: 30s
+    rules:
+      # =========================================================================
+      # API Performance Alerts
+      # =========================================================================
+      
+      # Yüksek error rate alert'i (Requirement 7.1)
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) / 
+           sum(rate(http_requests_total[5m]))) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: "Yüksek error rate tespit edildi"
+          description: "Error rate %5'i aştı: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-error-rate"
+
+      # Yüksek response time alert'i (Requirement 7.2)
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "Yüksek response time tespit edildi"
+          description: "95. percentile response time 5 saniyeyi aştı: {{ $value }}s"
+          runbook_url: "https://wiki.example.com/runbooks/high-response-time"
+
+      # =========================================================================
+      # System Resource Alerts
+      # =========================================================================
+      
+      # Disk alanı uyarısı (Requirement 7.3)
+      - alert: HighDiskUsage
+        expr: |
+          (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.2
+        for: 5m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "Disk alanı %80'i aştı"
+          description: "Kalan disk alanı: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-disk-usage"
+
+      # Memory kullanımı uyarısı (Requirement 7.4)
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "Memory kullanımı %90'ı aştı"
+          description: "Memory kullanımı: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-memory-usage"
+
+      # CPU kullanımı uyarısı
+      - alert: HighCPUUsage
+        expr: |
+          (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "CPU kullanımı %85'i aştı"
+          description: "CPU kullanımı: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-cpu-usage"
+
+      # =========================================================================
+      # Service Availability Alerts
+      # =========================================================================
+      
+      # API endpoint down alert'i (Requirement 7.5)
+      - alert: APIEndpointDown
+        expr: |
+          up{job="mami-ai"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "API endpoint down"
+          description: "Mami AI API endpoint 5 dakikadır erişilemez durumda"
+          runbook_url: "https://wiki.example.com/runbooks/api-endpoint-down"
+
+      # Elasticsearch down alert'i
+      - alert: ElasticsearchDown
+        expr: |
+          up{job="elasticsearch"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Elasticsearch down"
+          description: "Elasticsearch 5 dakikadır erişilemez durumda"
+          runbook_url: "https://wiki.example.com/runbooks/elasticsearch-down"
+
+      # Prometheus down alert'i
+      - alert: PrometheusDown
+        expr: |
+          up{job="prometheus"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Prometheus down"
+          description: "Prometheus 5 dakikadır erişilemez durumda"
+          runbook_url: "https://wiki.example.com/runbooks/prometheus-down"
+
+      # Redis down alert'i
+      - alert: RedisDown
+        expr: |
+          up{job="redis"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Redis down"
+          description: "Redis 5 dakikadır erişilemez durumda"
+          runbook_url: "https://wiki.example.com/runbooks/redis-down"
+
+      # =========================================================================
+      # Database Alerts
+      # =========================================================================
+      
+      # Database connection pool tükenmesi
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          (pg_stat_activity_count / pg_settings_max_connections) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Database connection pool %80'i aştı"
+          description: "Aktif bağlantı sayısı: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/db-connection-pool-exhausted"
+
+      # Database query time yüksek
+      - alert: HighDatabaseQueryTime
+        expr: |
+          histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Database query time yüksek"
+          description: "95. percentile query time 1 saniyeyi aştı: {{ $value }}s"
+          runbook_url: "https://wiki.example.com/runbooks/high-db-query-time"
+
+      # =========================================================================
+      # Cache Alerts
+      # =========================================================================
+      
+      # Cache hit rate düşük
+      - alert: LowCacheHitRate
+        expr: |
+          (rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m]))) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          category: cache
+        annotations:
+          summary: "Cache hit rate düşük"
+          description: "Cache hit rate: {{ $value | humanizePercentage }}"
+          runbook_url: "https://wiki.example.com/runbooks/low-cache-hit-rate"
+
+      # =========================================================================
+      # Queue Alerts
+      # =========================================================================
+      
+      # Request queue uzunluğu yüksek
+      - alert: HighRequestQueueLength
+        expr: |
+          http_requests_queued > 100
+        for: 5m
+        labels:
+          severity: warning
+          category: queue
+        annotations:
+          summary: "Request queue uzunluğu yüksek"
+          description: "Sırada bekleyen request sayısı: {{ $value }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-request-queue"
+
+      # =========================================================================
+      # Error Tracking Alerts
+      # =========================================================================
+      
+      # Sentry error rate yüksek
+      - alert: HighSentryErrorRate
+        expr: |
+          rate(sentry_errors_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: errors
+        annotations:
+          summary: "Sentry error rate yüksek"
+          description: "Saniye başına error sayısı: {{ $value }}"
+          runbook_url: "https://wiki.example.com/runbooks/high-sentry-error-rate"

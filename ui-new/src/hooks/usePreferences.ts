@@ -50,17 +50,20 @@ export function usePreferences() {
     const imageGenEnabled = useSettingsStore((s) => s.imageGenEnabled)
 
     // ─── LOAD PREFERENCES FROM BACKEND ───────────────────────────────────────
+    const isPublicPage = window.location.pathname === '/login' || window.location.pathname === '/register'
 
     const preferencesQuery = useQuery({
         queryKey: ['preferences'],
         queryFn: () => preferencesApi.getPreferences('style'),
         staleTime: 1000 * 60 * 5, // 5 minutes
+        enabled: !isPublicPage,
     })
 
     const personasQuery = useQuery({
         queryKey: ['personas'],
         queryFn: () => preferencesApi.getPersonas(),
         staleTime: 1000 * 60 * 10, // 10 minutes
+        enabled: !isPublicPage,
     })
 
     // Apply backend preferences to store on load

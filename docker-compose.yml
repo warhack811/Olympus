@@ -1,0 +1,238 @@
+# =============================================================================
+# Mami AI - Docker Compose (Geliştirme Ortamı)
+# =============================================================================
+# 
+# ÖNEMLI: Bu konfigürasyon SADECE geliştirme için tasarlanmıştır.
+# 
+# Bulut Servisleri (Production):
+#   - Redis: Upstash (rediss://whole-cockatoo-60385.upstash.io:6379)
+#   - Neo4j: Neo4j Aura (neo4j+s://1e6ee29b.databases.neo4j.io)
+#   - Qdrant: Qdrant Cloud (https://5982ccc8-67c5-410b-9590-594cb1b41903...)
+#
+# Yerel Servisler (Manuel Başlatma):
+#   - Forge/SD WebUI: http://127.0.0.1:7860 (Windows'ta çalışır)
+#
+# Docker'da Çalışan Servisler:
+#   - mami-ai: FastAPI API (8000)
+#   - mami-worker: Görsel İşleme Worker (background)
+#   - mami-ui: Frontend Vite Dev Server (5173)
+#
+# Kullanım:
+#   docker-compose up --build
+#   docker-compose down
+#
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ═════════════════════════════════════════════════════════════════════════
+  # API - FastAPI Uygulaması
+  # ═════════════════════════════════════════════════════════════════════════
+  mami-ai:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mami-ai
+    restart: unless-stopped
+    
+    ports:
+      - "8000:8000"
+    
+    env_file:
+      - .env
+    
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    
+    volumes:
+      # Kalıcı veri dizinleri
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - mami-network
+    
+    # NOT: Redis, Neo4j, Qdrant bulut servisleri olduğu için depends_on'a gerek yok
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # WORKER - Görsel İşleme (Arka Plan)
+  # ═════════════════════════════════════════════════════════════════════════
+  mami-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mami-worker
+    restart: unless-stopped
+    
+    env_file:
+      - .env
+    
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    
+    volumes:
+      - ./logs:/app/logs
+    
+    # Worker'ı başlat
+    command: python -m app.image.worker_local
+    
+    depends_on:
+      - mami-ai
+    
+    networks:
+      - mami-network
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # FRONTEND - Vite Dev Server
+  # ═════════════════════════════════════════════════════════════════════════
+  mami-ui:
+    image: node:20-alpine
+    container_name: mami-ui
+    
+    working_dir: /app
+    
+    ports:
+      - "5173:5173"
+    
+    environment:
+      # Docker'da API container adı ile erişim
+      - VITE_API_URL=http://mami-ai:8000
+    
+    volumes:
+      # Proje dosyaları
+      - ./ui-new:/app
+      # node_modules'u host'tan izole et (performance)
+      - /app/node_modules
+    
+    # npm install + Vite dev server
+    command: sh -c "npm install && npm run dev -- --host"
+    
+    networks:
+      - mami-network
+    
+    depends_on:
+      - mami-ai
+
+  # ═════════════════════════════════════════════════════════════════════════
+  # LOGGING & MONITORING - Elasticsearch, Prometheus, Grafana
+  # ═════════════════════════════════════════════════════════════════════════
+  
+  # Elasticsearch - Merkezi log depolama ve arama
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: mami-elasticsearch
+    restart: unless-stopped
+    
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    
+    environment:
+      # Tek node cluster konfigürasyonu
+      - discovery.type=single-node
+      # Güvenlik ayarları (geliştirme için devre dışı)
+      - xpack.security.enabled=false
+      # Bellek ayarları
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - mami-network
+  
+  # Prometheus - Metrik toplama ve depolama
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mami-prometheus
+    restart: unless-stopped
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      # Prometheus konfigürasyon dosyası
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Alert rules dosyası
+      - ./docker/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      # Prometheus veri depolama
+      - prometheus_data:/prometheus
+    
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    networks:
+      - mami-network
+  
+  # Grafana - Metrik görselleştirme ve dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mami-grafana
+    restart: unless-stopped
+    
+    ports:
+      - "3000:3000"
+    
+    environment:
+      # Admin kullanıcı ayarları
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Anonim erişim
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      # Plugin'ler
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    
+    volumes:
+      # Grafana veri depolama
+      - grafana_data:/var/lib/grafana
+      # Provisioning konfigürasyonları
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    
+    networks:
+      - mami-network
+    
+    depends_on:
+      - prometheus
+
+networks:
+  mami-network:
+    driver: bridge
+
+volumes:
+  elasticsearch_data:
+  prometheus_data:
+  grafana_data:
+
+# NOT: Redis, Neo4j, Qdrant volumes tanımlanmıyor çünkü bulut servisleri kullanılıyor

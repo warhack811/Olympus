@@ -222,3 +222,4 @@ async def handle_internet_action(
         logger.error(f"[INTERNET] Crash: {error_trace}")
         return f"İnternet modülünde teknik bir hata: {str(e)}"
 
+

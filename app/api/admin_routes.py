@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,10 +19,7 @@ from app.core.models import AIIdentityConfig, Conversation, ConversationSummaryS
 from app.core.summary_config import get_summary_settings, update_summary_settings
 
 # Orchestrator v4.2 Observability
-from app.orchestrator_v42 import telemetry as orch_telemetry
-from app.orchestrator_v42.debug_snapshot import build_debug_snapshot
-from app.orchestrator_v42.feature_flags import OrchestratorFeatureFlags
-from app.orchestrator_v42.gateway import _RUNTIME_STATE
+from app.core.telemetry.snapshot import build_admin_orch_snapshot
 from app.config import get_settings
 
 logger = get_logger(__name__)
@@ -395,47 +391,22 @@ async def admin_update_ai_identity(
 
 
 # -------------------------------------------------------------------
-# 7) Orchestrator Observability (FAZ 16.0)
+# 7) Orchestrator Observability (Atlas snapshot)
 # -------------------------------------------------------------------
-@router.get("/orch/snapshot")
+@router.get('/orch/snapshot')
 async def admin_orch_snapshot(
     verbose: bool = Query(False),
     current_admin: User = Depends(get_current_admin_user),
 ):
     """
-    Orchestrator çalışma zamanı durumunu ve telemetri verilerini döndürür.
-    verbose=True: Detaylı snapshot döner (Sadece DEBUG modunda aktiftir).
+    Atlas/Brain snapshot (OrchDebugPanel contract).
+    Fail-open: Sayaç/Redis hatalarında 0/empty ile döner.
     """
-    settings = get_settings()
-    
-    # Telemetri Sayaçları
-    telemetry_data = await orch_telemetry.get_snapshot()
-    
-    # Temel Snapshot
-    flags = OrchestratorFeatureFlags.load_from_env()
-    snapshot = build_debug_snapshot(flags, telemetry_data, _RUNTIME_STATE)
-    
-    # Verbose Mantığı
-    is_debug = getattr(settings, "DEBUG", False)
-    final_snapshot = snapshot
-    
-    if not (verbose and is_debug):
-        # Detaylı alanları temizle
-        if "last_trace" in final_snapshot:
-            trace = final_snapshot["last_trace"]
-            # Sadece özet kalsın
-            summary_trace = {
-                "trace_id": trace.get("trace_id"),
-                "timestamp": trace.get("timestamp"),
-                "event_count": len(trace.get("events", []))
-            }
-            final_snapshot["last_trace_summary"] = summary_trace
-            del final_snapshot["last_trace"]
-
+    snapshot_obj = await build_admin_orch_snapshot(verbose=verbose)
     return {
         "ok": True,
-        "debug_mode": is_debug,
+        "debug_mode": getattr(get_settings(), 'DEBUG', False),
         "verbose_requested": verbose,
-        "telemetry": telemetry_data,
-        "snapshot": final_snapshot
+        "telemetry": snapshot_obj.get('telemetry', {}),
+        "snapshot": snapshot_obj.get('snapshot', {}),
     }

@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 
 def _get_imports():
     """Import döngüsünü önlemek için lazy import."""
-    from app.ai.prompts.compiler import CORE_PROMPT
     from app.ai.prompts.identity import enforce_model_identity, get_ai_identity
-    from app.chat.decider import call_groq_api_async, call_groq_api_stream_async
     from app.config import get_settings
     from app.services.response_processor import full_post_process
 
@@ -58,8 +56,6 @@ def _get_imports():
         get_settings,
         get_ai_identity,
         enforce_model_identity,
-        call_groq_api_async,
-        call_groq_api_stream_async,
         full_post_process,
         CORE_PROMPT,
     )
@@ -178,129 +174,7 @@ def get_dynamic_temperature(
 # =============================================================================
 
 
-def _clean_thinking_block(text: str, *, strip: bool = True) -> str:
-    """
-    Modelin <thinking> bloklarını temizler.
 
-    Args:
-        text: Temizlenecek metin
-        strip: Baş/son boşlukları temizle
-
-    Returns:
-        str: Temizlenmiş metin
-    """
-    if not text:
-        return ""
-    cleaned = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
-    return cleaned.strip() if strip else cleaned
-
-
-def _build_user_content(message: str, context: str | None) -> str:
-    """
-    Context ve kullanıcı mesajını birleştirir.
-
-    Args:
-        message: Kullanıcı mesajı
-        context: RAG/hafıza bağlamı
-
-    Returns:
-        str: Birleştirilmiş içerik
-    """
-    if context:
-        return (
-            f"--- BAĞLAM BÖLÜMÜ BAŞLANGICI ---\n{context}\n--- BAĞLAM BÖLÜMÜ SONU ---\n\nKULLANICI SORUSU:\n{message}"
-        )
-    return message
-
-
-def _append_history(messages: list[dict[str, str]], history: list[dict[str, str]] | None) -> None:
-    """
-    Sohbet geçmişini mesaj listesine ekler.
-
-    Args:
-        messages: Hedef mesaj listesi
-        history: Eklenecek geçmiş
-    """
-    if not history:
-        return
-    for m in history:
-        role = m.get("role")
-        content = m.get("content")
-        if role == "bot":
-            role = "assistant"
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content})
-
-
-async def _thinking_filter_async(
-    source: AsyncGenerator[str, None],
-) -> AsyncGenerator[str, None]:
-    """
-    Streaming yanıttan <thinking> bloklarını filtreler.
-
-    Memory-safe implementation using StreamingBuffer.
-
-    Args:
-        source: Kaynak stream
-
-    Yields:
-        str: Filtrelenmiş içerik parçaları
-    """
-    from app.chat.streaming_buffer import StreamingBuffer
-
-    open_tag = "<thinking>"
-    close_tag = "</thinking>"
-    buffer_obj = StreamingBuffer(max_chunks=100)  # Small buffer for filter
-    thinking_mode = False
-
-    try:
-        async for chunk in source:
-            if not chunk:
-                continue
-
-            buffer_obj.append(chunk)
-            buffer_str = "".join(buffer_obj.chunks)  # Get current content without finalizing
-
-            while True:
-                if thinking_mode:
-                    end_idx = buffer_str.find(close_tag)
-                    if end_idx == -1:
-                        break
-                    buffer_str = buffer_str[end_idx + len(close_tag) :]
-                    buffer_obj.clear()
-                    buffer_obj.append(buffer_str)
-                    thinking_mode = False
-                    continue
-
-                start_idx = buffer_str.find(open_tag)
-                if start_idx == -1:
-                    if buffer_str:
-                        cleaned = _clean_thinking_block(buffer_str, strip=False)
-                        if cleaned:
-                            yield cleaned
-                    buffer_obj.clear()
-                    break
-
-                if start_idx > 0:
-                    segment = buffer_str[:start_idx]
-                    cleaned = _clean_thinking_block(segment, strip=False)
-                    if cleaned:
-                        yield cleaned
-
-                buffer_str = buffer_str[start_idx + len(open_tag) :]
-                buffer_obj.clear()
-                buffer_obj.append(buffer_str)
-                thinking_mode = True
-
-        # Final cleanup
-        buffer_str = "".join(buffer_obj.chunks)
-        if buffer_str and not thinking_mode:
-            cleaned = _clean_thinking_block(buffer_str, strip=False)
-            if cleaned:
-                yield cleaned
-
-    finally:
-        buffer_obj.clear()  # Cleanup
 
 
 # =============================================================================
@@ -332,10 +206,17 @@ async def generate_answer(
     Returns:
         str: Üretilen yanıt
     """
-    get_settings, get_ai_identity, enforce_model_identity, call_groq_api_async, _, full_post_process, CORE_PROMPT = (
-        _get_imports()
-    )
+    (
+        get_settings,
+        get_ai_identity,
+        enforce_model_identity,
+        full_post_process,
+        CORE_PROMPT,
+    ) = _get_imports()
     settings = get_settings()
+
+    # Shared helper imports
+    from app.chat.stream_manager import _clean_thinking_block
 
     # Dinamik temperature (Style profile ile)
     temperature = get_dynamic_temperature(analysis, style_profile)
@@ -348,8 +229,8 @@ async def generate_answer(
         "GİZLİLİK: Sağlayıcı isimlerini (Google, Groq, Llama vb.) asla söyleme.\n"
     )
 
-    # Sistem prompt
-    base_system = system_prompt or CORE_PROMPT
+    # Sistem prompt (Zorunlu)
+    base_system = system_prompt or "Sen yardımcı bir asistansın."
 
     # Semantic analiz bazlı ek talimatlar
     extra_instructions = []
@@ -394,15 +275,29 @@ async def generate_answer(
     messages.append({"role": "user", "content": user_content})
 
     try:
-        answer_model = getattr(settings, "GROQ_ANSWER_MODEL", settings.GROQ_DECIDER_MODEL)
-        raw_answer = await call_groq_api_async(
+        from app.chat.decider import _get_llm_generator
+        from app.core.llm.generator import LLMRequest
+        from app.core.llm.governance import governance
+
+        # Governance'dan model zincirini al
+        chain = governance.get_model_chain("synthesizer")
+        answer_model = chain[0] if chain else "llama-3.3-70b-versatile"
+        
+        generator = _get_llm_generator()
+        request = LLMRequest(
+            role="answer",
             messages=messages,
             temperature=temperature,
-            model=answer_model,
+            metadata={
+                "override_model": answer_model,
+                "system_prompt": None,  # sistem mesajı messages içinde
+            },
         )
 
-        if not raw_answer:
+        result = await generator.generate(request)
+        if not result.ok:
             return "😔 (Sistem) Yanıt üretilemedi. Lütfen tekrar dene."
+        raw_answer = result.text
 
         # DEBUG LOG: LLM RAW RESPONSE
         logger.info("=" * 50)
@@ -429,7 +324,7 @@ async def generate_answer(
         try:
             processed = full_post_process(cleaned, context=shaper_context)
         except Exception as e:
-            logger.warning(f"[ANSWERER] full_post_process failed: {e}")
+            logger.warning(f"[ANSWERER] full_post_process failed: {e}", exc_info=True)
             processed = cleaned  # Fallback to unprocessed
 
         final = enforce_model_identity("groq", processed)
@@ -437,7 +332,7 @@ async def generate_answer(
         return final
 
     except Exception as e:
-        logger.error(f"[ANSWERER] Hata: {e}")
+        logger.error(f"[ANSWERER] Hata: {e}", exc_info=True)
         return "⚠️ Bir hata oluştu. Lütfen daha sonra tekrar dene."
 
 
@@ -472,10 +367,8 @@ async def generate_answer_stream(
         get_settings,
         get_ai_identity,
         enforce_model_identity,
-        _,
-        call_groq_api_stream_async,
         full_post_process,
-        CORE_PROMPT,
+        full_post_process,
     ) = _get_imports()
     settings = get_settings()
 
@@ -488,7 +381,7 @@ async def generate_answer_stream(
         "GİZLİLİK: Sağlayıcı isimlerini (Google, Groq, Llama vb.) asla söyleme.\n"
     )
 
-    base_system = system_prompt or CORE_PROMPT
+    base_system = system_prompt or "Sen yardımcı bir asistansın."
 
     extra_instructions = []
     if analysis:
@@ -513,7 +406,11 @@ async def generate_answer_stream(
     # GÖRSEL İŞLEME (VISION) VE MODEL SEÇİMİ
     # -------------------------------------------------------------------------
 
-    answer_model = getattr(settings, "GROQ_ANSWER_MODEL", settings.GROQ_DECIDER_MODEL)
+    from app.core.llm.governance import governance
+    
+    # Governance'dan model zincirini al
+    chain = governance.get_model_chain("synthesizer")
+    answer_model = chain[0] if chain else "llama-3.3-70b-versatile"
     is_vision_request = False
 
     if images and len(images) > 0:
@@ -555,7 +452,7 @@ async def generate_answer_stream(
                 else:
                     logger.warning(f"[VISION] Dosya bulunamadı: {real_path} (Raw: {img_path})")
             except Exception as e:
-                logger.error(f"[VISION] Resim okuma hatası: {e}")
+                logger.error(f"[VISION] Resim okuma hatası: {e}", exc_info=True)
 
         # Eğer görsel başarıyla eklendiyse multimodal mesaj yap
         if len(content_list) > 1:
@@ -569,44 +466,42 @@ async def generate_answer_stream(
 
     try:
         from app.chat.streaming_buffer import StreamingBuffer
+        from app.chat.decider import _get_llm_generator
+        from app.core.llm.generator import LLMRequest
 
-        # SMART FALLBACK LOGIC
-        # call_groq_api_stream_async generator döndürür, hata fırlatmaz (yield eder).
-        # Bu yüzden ilk chunk'ı bekleyip hata kontrolü yapabiliriz veya decider'ı güncelleyebiliriz.
-        # Decider güncellemek daha riskli, burada wrap edelim.
+        generator = _get_llm_generator()
 
         async def safe_stream_generator():
             try:
-                internal_gen = call_groq_api_stream_async(
+                req = LLMRequest(
+                    role="answer",
                     messages=messages,
                     temperature=temperature,
-                    model=answer_model,
+                    metadata={"override_model": answer_model},
                 )
+                internal_gen = generator.generate_stream(req)
 
-                # İlk chunk kontrolü (Hata var mı?)
                 retry_needed = False
-                first_chunks = []
-
                 async for chunk in internal_gen:
                     if is_vision_request and "[ERROR]" in chunk and "scout" in answer_model:
                         retry_needed = True
                         break
-                    first_chunks.append(chunk)
                     yield chunk
 
                 if retry_needed:
-                    logger.warning("[VISION] Scout Model Error! Switching to Maverick...")
+                    logger.warning("[VISION] Scout Model Error! Switching to Maverick...", exc_info=True)
                     fallback_model = "meta-llama/llama-4-maverick-17b-128e-instruct"
-                    fallback_gen = call_groq_api_stream_async(
+                    fallback_req = LLMRequest(
+                        role="answer",
                         messages=messages,
                         temperature=temperature,
-                        model=fallback_model,
+                        metadata={"override_model": fallback_model},
                     )
-                    async for chunk in fallback_gen:
+                    async for chunk in generator.generate_stream(fallback_req):
                         yield chunk
 
             except Exception as e:
-                logger.error(f"[ANSWERER] Stream wrapper error: {e}")
+                logger.error(f"[ANSWERER] Stream wrapper error: {e}", exc_info=True)
                 yield f"⚠️ Stream hatası: {e}"
 
         chunk_source = cast(AsyncGenerator[str, None], safe_stream_generator())
@@ -614,8 +509,9 @@ async def generate_answer_stream(
         # 1. Tüm cevabı topla (memory-safe buffer ile)
         buffer = StreamingBuffer(max_chunks=1000)  # ~100KB max
 
+        from app.chat.stream_manager import thinking_filter_async
         try:
-            async for chunk in _thinking_filter_async(chunk_source):
+            async for chunk in thinking_filter_async(chunk_source):
                 buffer.append(chunk)
 
             # Finalize buffer (memory cleared automatically)
@@ -644,5 +540,5 @@ async def generate_answer_stream(
                 yield word
 
     except Exception as e:
-        logger.error(f"[ANSWERER_STREAM] Hata: {e}")
+        logger.error(f"[ANSWERER_STREAM] Hata: {e}", exc_info=True)
         yield "⚠️ Bir hata oluştu. Lütfen daha sonra tekrar dene."

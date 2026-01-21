@@ -171,13 +171,18 @@ async def _generate_image_internal(prompt: str, job, checkpoint_name: str | None
         job.progress = 1
         update_pending_job(job.job_id, progress=job.progress)
 
-        # Sadece metadata güncelle - içerik [IMAGE_PENDING] olarak kalmalı
-        # Frontend WebSocket'ten progress alıyor, mesaj içeriğini değiştirmeye gerek yok
+        # FAZE 1: Processing başladığında tüm alanları persist et (deep merge ile)
         if job.message_id:
             update_message(
                 job.message_id,
                 None,  # İçerik değişmesin
-                {"status": "processing", "progress": job.progress},
+                {
+                    "status": "processing",
+                    "progress": job.progress,
+                    "queue_position": 0,  # Processing'de sırada değil
+                    "job_id": job.job_id,
+                    "prompt": prompt
+                },
             )
 
         await send_image_progress(
@@ -199,12 +204,15 @@ async def _generate_image_internal(prompt: str, job, checkpoint_name: str | None
             job.progress = current
             update_pending_job(job.job_id, progress=job.progress)
 
-            # Her 10%'te bir metadata güncelle (içerik değişmesin)
+            # Her 10%'te bir metadata güncelle (deep merge ile)
             if job.message_id and job.progress % 10 == 0:
                 update_message(
                     job.message_id,
                     None,  # İçerik değişmesin
-                    {"status": "processing", "progress": job.progress},
+                    {
+                        "status": "processing",
+                        "progress": job.progress
+                    },
                 )
 
             await send_image_progress(
@@ -268,7 +276,19 @@ async def _generate_image_internal(prompt: str, job, checkpoint_name: str | None
 
     image_url = f"/images/{filename}"
 
-    # 7) Son durumda progress %100 + path ile WS'e gönder
+    # 7) FAZE 1: Tamamlandığında tüm alanları persist et (deep merge ile)
+    if job.message_id:
+        update_message(
+            job.message_id,
+            content=f"[IMAGE] Resminiz hazır.\nIMAGE_PATH: {image_url}",
+            new_metadata={
+                "status": "complete",
+                "progress": 100,
+                "image_url": image_url,
+                "queue_position": 0
+            }
+        )
+
     try:
         update_pending_job(job.job_id, progress=100)
         await send_image_progress(

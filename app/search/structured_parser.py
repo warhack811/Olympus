@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.search.manager import SearchSnippet
+from app.search.models import SearchSnippet
 
 
 def parse_weather_result(snippets: list[SearchSnippet]) -> dict | None:

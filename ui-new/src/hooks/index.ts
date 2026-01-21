@@ -23,6 +23,9 @@ export {
 // WebSocket
 export { useWebSocket } from './useWebSocket'
 
+// Queue Position Updates (FAZE 3)
+export { useQueuePositionUpdates } from './useQueuePositionUpdates'
+
 // Image Progress (new simple approach)
 export {
     useImageProgress,

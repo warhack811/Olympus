@@ -36,7 +36,7 @@ export function LoginPage() {
     }
 
     return (
-        <div className="min-h-screen w-full flex items-center justify-center bg-[url('/images/bg-auth.jpg')] bg-cover bg-center">
+        <div className="min-h-screen w-full flex items-center justify-center bg-gray-950">
             {/* Dark Overlay */}
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 

@@ -19,3 +19,4 @@ Hafıza Türleri:
     - RAG: Yüklenen dokümanlar (PDF, TXT)
 """
 
+

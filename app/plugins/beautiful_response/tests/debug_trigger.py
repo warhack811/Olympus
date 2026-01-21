@@ -63,7 +63,8 @@ Ve normal text.
 
         with patch("app.config.get_settings") as mock_settings_getter:
             mock_settings = mock_settings_getter.return_value
-            mock_settings.GROQ_ANSWER_MODEL = "mixtral-8x7b-32768"
+            # Governance'dan model alınır, bu yüzden mock'a gerek yok
+            # Ama eğer gerekirse governance'ı mock edebiliriz
 
             # Run the function
             try:

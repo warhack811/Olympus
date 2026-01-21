@@ -29,6 +29,8 @@ export function useAuth(): UseAuthReturn {
     const setBranding = useUserStore((state) => state.setBranding)
     const storeUser = useUserStore((state) => state.user)
 
+    const isPublicPage = window.location.pathname === '/login' || window.location.pathname === '/register'
+
     // Fetch current user
     const {
         data: user,
@@ -40,6 +42,7 @@ export function useAuth(): UseAuthReturn {
         queryFn: authApi.getCurrentUser,
         retry: false,
         staleTime: 1000 * 60 * 5, // 5 minutes
+        enabled: !isPublicPage, // DON'T fetch if already on login/register
     })
 
     // Sync with store
@@ -80,12 +83,28 @@ export function useAuth(): UseAuthReturn {
     const logoutMutation = useMutation({
         mutationFn: authApi.logout,
         onSuccess: () => {
-            setUser(null)
-            setAuthenticated(false)
-            queryClient.clear()
-            // Redirect to login
-            window.location.href = '/'
+            try {
+                // 1. Clear individual Auth States
+                setUser(null)
+                setAuthenticated(false)
+
+                // 2. Safe reset for other stores
+                const chatStore = (window as any).__chatStore;
+                if (chatStore?.getState()?.clearAll) chatStore.getState().clearAll();
+
+                // 3. Clear Cache
+                queryClient.clear()
+            } catch (err) {
+                console.error("Logout cleanup error:", err);
+            } finally {
+                // 4. THE ULTIMATE RESET: Force redirect to login no matter what
+                window.location.href = '/login'
+            }
         },
+        onError: () => {
+            // Even if API fails, we must redirect
+            window.location.href = '/login'
+        }
     })
 
     const login = useCallback(async (username: string, password: string): Promise<boolean> => {

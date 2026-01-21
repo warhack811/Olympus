@@ -150,7 +150,13 @@ async def get_active_persona(user: User = Depends(get_current_active_user)):
     from app.core.dynamic_config import config_service
 
     active_name = user.active_persona or "standard"
+
     persona = config_service.get_persona(active_name)
+
+    # Eğer hala bulunamadıysa (DB'de silinmiş veya pasifse) friendly'ye düş
+    if not persona:
+        active_name = "friendly"
+        persona = config_service.get_persona(active_name)
 
     if persona:
         return {
@@ -158,13 +164,15 @@ async def get_active_persona(user: User = Depends(get_current_active_user)):
             "display_name": persona.get("display_name", active_name),
             "requires_uncensored": persona.get("requires_uncensored", False),
             "initial_message": persona.get("initial_message"),
+            "icon": persona.get("icon", "💬"),
         }
 
     return {
-        "active_persona": "standard",
-        "display_name": "Standart",
+        "active_persona": "friendly",
+        "display_name": "Arkadaşça",
         "requires_uncensored": False,
         "initial_message": None,
+        "icon": "🤝",
     }
 
 

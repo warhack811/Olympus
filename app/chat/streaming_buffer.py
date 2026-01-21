@@ -53,7 +53,10 @@ class StreamingBuffer:
         self._total_chunks_received = 0
         self._chunks_dropped = 0
 
-        logger.debug(f"[STREAMING_BUFFER] Initialized with max_chunks={max_chunks}")
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.DEBUG:
+            logger.debug(f"[STREAMING_BUFFER] Initialized with max_chunks={max_chunks}")
 
     def append(self, chunk: str):
         """
@@ -97,10 +100,13 @@ class StreamingBuffer:
                     f"[STREAMING_BUFFER] Dropped {self._chunks_dropped} chunks (buffer overflow, max={self.max_chunks})"
                 )
 
-            logger.debug(
-                f"[STREAMING_BUFFER] Finalized: {self._total_chunks_received} chunks, "
-                f"{len(self._finalized)} chars, {self._chunks_dropped} dropped"
-            )
+            from app.config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                logger.debug(
+                    f"[STREAMING_BUFFER] Finalized: {self._total_chunks_received} chunks, "
+                    f"{len(self._finalized)} chars, {self._chunks_dropped} dropped"
+                )
 
             # Clear buffer for garbage collection
             self.chunks.clear()
@@ -118,7 +124,10 @@ class StreamingBuffer:
         self._total_chunks_received = 0
         self._chunks_dropped = 0
 
-        logger.debug("[STREAMING_BUFFER] Cleared")
+        from app.config import get_settings
+        settings = get_settings()
+        if settings.DEBUG:
+            logger.debug("[STREAMING_BUFFER] Cleared")
 
     def get_stats(self) -> dict:
         """

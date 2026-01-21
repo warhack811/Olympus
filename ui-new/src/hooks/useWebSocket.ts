@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useToast } from '@/components/common'
+import { useUserStore } from '@/stores'
 // progressCache artık kullanılmıyor - state doğrudan güncelleniyor
 import { decodeHtmlEntities } from '@/lib/utils'
 import type { WebSocketMessage, Message } from '@/types'
@@ -61,49 +62,82 @@ export function useWebSocket(): UseWebSocketReturn {
 
                 console.log('[WebSocket] Image progress:', jobId.slice(0, 8), status, progress + '%', 'queuePos:', queuePosition)
 
-                // Update message directly via job_id matching
-                import('@/stores/chatStore').then(({ useChatStore }) => {
-                    const updateMessageByJobId = () => {
-                        const store = useChatStore.getState()
-                        const messages = store.messages
+                const updateStores = async () => {
+                    const { useChatStore } = await import('@/stores/chatStore')
+                    const { useImageJobsStore } = await import('@/stores/imageJobsStore')
 
-                        // Find message by job_id
-                        const targetMessage = messages.find(m => m.extra_metadata?.job_id === jobId)
+                    const chatStore = useChatStore.getState()
+                    const imageStore = useImageJobsStore.getState()
 
-                        if (targetMessage) {
-                            // Update extra_metadata with progress info
-                            store.updateMessage(targetMessage.id, {
-                                extra_metadata: {
-                                    ...targetMessage.extra_metadata,
-                                    status: status as 'queued' | 'processing' | 'complete' | 'error',
-                                    progress: progress,
-                                    queue_position: queuePosition,
-                                },
-                                // If complete/error, also update content
-                                ...(status === 'complete' && rawData.image_url ? {
-                                    content: `[IMAGE] Resminiz hazır.\nIMAGE_PATH: ${rawData.image_url}`
-                                } : {}),
-                                ...(status === 'error' ? {
-                                    content: `❌ Görsel oluşturulamadı: ${rawData.error || 'Bilinmeyen hata'}`
-                                } : {}),
-                            })
-                            console.log('[WebSocket] Updated message:', targetMessage.id, status, progress + '%')
-                            return true
+                    // Ordered status levels to prevent regressions
+                    const statusLevels: Record<string, number> = {
+                        'queued': 1,
+                        'processing': 2,
+                        'complete': 3,
+                        'error': 4
+                    }
+
+                    // 1. Update Chat Store (Persistent UI) - Detreministic Match First
+                    const targetMessage = chatStore.messages.find(m =>
+                        (m.id === String(rawData.message_id) && rawData.message_id) ||
+                        m.extra_metadata?.job_id === jobId
+                    )
+
+                    if (targetMessage) {
+                        const currentStatus = (targetMessage.extra_metadata?.status as string) || 'queued'
+                        const currentLevel = statusLevels[currentStatus] || 0
+                        const nextLevel = statusLevels[status] || 0
+
+                        // Terminal State Rule (Phase 5.1):
+                        // 1. If current status is complete or error, ignore later events.
+                        // 2. complete cannot be downgraded to error.
+                        if (currentStatus === 'complete' || currentStatus === 'error') {
+                            console.log('[WebSocket] Ignoring event for terminal state:', { jobId, currentStatus, nextStatus: status })
+                            return
                         }
-                        return false
+
+                        // Guard: Don't revert to previous state (e.g., processing -> queued)
+                        if (nextLevel < currentLevel) {
+                            console.warn('[WebSocket] Ignored out-of-order event:', { jobId, currentStatus, nextStatus: status })
+                            return
+                        }
+
+                        chatStore.updateMessage(targetMessage.id, {
+                            extra_metadata: {
+                                ...targetMessage.extra_metadata,
+                                type: 'image',
+                                status: status as any,
+                                progress,
+                                queue_position: queuePosition,
+                                image_url: rawData.image_url,
+                                error: rawData.error
+                            },
+                            // If complete/error, also update content as fallback
+                            ...(status === 'complete' && rawData.image_url ? {
+                                content: `[IMAGE] Resminiz hazır.\nIMAGE_PATH: ${rawData.image_url}`
+                            } : {}),
+                            ...(status === 'error' ? {
+                                content: `❌ Görsel oluşturulamadı: ${rawData.error || 'Bilinmeyen hata'}`
+                            } : {}),
+                        })
+                        console.log('[WebSocket] Updated message:', targetMessage.id, status, progress + '%')
+                    } else {
+                        console.warn('[WebSocket] No message found for job_id/msg_id:', { jobId: jobId.slice(0, 8), msgId: rawData.message_id })
                     }
 
-                    // Try to update immediately
-                    if (!updateMessageByJobId()) {
-                        // If not found, retry after 300ms (message might be loading from DB)
-                        console.log('[WebSocket] Message not found, retrying in 300ms...')
-                        setTimeout(() => {
-                            if (!updateMessageByJobId()) {
-                                console.warn('[WebSocket] Still no message found for job_id:', jobId.slice(0, 8))
-                            }
-                        }, 300)
-                    }
-                }).catch(err => console.error('[WebSocket] update error:', err))
+                    // 2. Update Image Jobs Store (Active tracking)
+                    imageStore.updateJob({
+                        id: jobId,
+                        conversationId,
+                        status: status as any,
+                        progress,
+                        queuePosition,
+                        imageUrl: rawData.image_url,
+                        error: rawData.error
+                    })
+                }
+
+                updateStores().catch(err => console.error('[WebSocket] store update error:', err))
 
                 // Show toast when complete/error
                 if (status === 'complete') {
@@ -147,9 +181,9 @@ export function useWebSocket(): UseWebSocketReturn {
 
         connectionPromise = new Promise<void>((resolve) => {
             try {
-                // Build WebSocket URL
-                const API_URL = import.meta.env.VITE_API_URL || 'https://mami-ai-core.onrender.com'
-                const wsUrl = API_URL.replace(/^http/, 'ws') + '/ws'
+                // Build WebSocket URL - Use relative path for Proxy/Cookie support
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+                const wsUrl = `${protocol}//${window.location.host}/ws`
 
                 console.log('[WebSocket] Connecting to:', wsUrl)
 
@@ -172,7 +206,8 @@ export function useWebSocket(): UseWebSocketReturn {
                     connectionPromise = null
 
                     // Auto-reconnect with exponential backoff
-                    if (reconnectAttempts.current < 5) {
+                    // STOP reconnecting if it was a policy violation (1008) - usually means unauthorized/logout
+                    if (e.code !== 1008 && reconnectAttempts.current < 5) {
                         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000)
                         console.log(`[WebSocket] Reconnecting in ${delay}ms...`)
                         reconnectTimeoutRef.current = window.setTimeout(() => {

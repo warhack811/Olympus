@@ -53,7 +53,7 @@ export function QuickSettings({ children }: QuickSettingsProps) {
         }
     }, [personaOpen])
 
-    const currentPersona = PERSONAS.find(p => p.name === activePersona) || PERSONAS[0]
+    const currentPersona = PERSONAS.find(p => p.name === activePersona) || PERSONAS.find(p => p.name === 'friendly') || PERSONAS[0]
 
     return (
         <div className="flex items-center gap-1">

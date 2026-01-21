@@ -47,7 +47,7 @@ export const ImageProgressCard = memo(function ImageProgressCard({
         // Error durumunda 0
         if (isError) return 0
 
-        // Queued: Sıra × 80 saniye
+        // Queued: Sıra × 80 saniye (FAZE 3: Dynamic position)
         if (isQueued) {
             return (job.queuePosition || 1) * 80
         }
@@ -213,7 +213,7 @@ export const ImageProgressCard = memo(function ImageProgressCard({
                     {/* Enhanced Shimmer Placeholder */}
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden mb-3">
                         {/* Base gradient */}
-                        <div className="absolute inset-0 bg-gradient-to-br from-[#1a1a2e] to-[#16213e]" />
+                        <div className="absolute inset-0" style={{ background: 'var(--gradient-brand)', opacity: 0.1 }} />
 
                         {/* Shimmer effect */}
                         <div className="absolute inset-0 shimmer-animation" />
@@ -258,40 +258,8 @@ export const ImageProgressCard = memo(function ImageProgressCard({
                         </div>
                     </div>
 
-                    {/* Progress Info */}
-                    <div className="flex items-center gap-3">
-                        {/* Prompt with Copy Button */}
-                        <div className="flex items-start gap-2">
-                            <p className="flex-1 text-sm text-(--color-text) leading-snug line-clamp-2">
-                                {displayPrompt}
-                            </p>
-                            {isProcessing && (
-                                <button
-                                    onClick={handleCopyPrompt}
-                                    className={`
-                                            flex items-center gap-1 px-2 py-1 rounded-md text-xs
-                                            transition-all duration-200 shrink-0
-                                            ${copied
-                                            ? 'bg-green-500/20 text-green-400'
-                                            : 'bg-(--color-surface-hover) text-(--color-text-muted) hover:bg-(--color-primary)/20 hover:text-(--color-primary)'
-                                        }
-                                        `}
-                                    title="Prompt'u kopyala"
-                                >
-                                    {copied ? (
-                                        <>
-                                            <Check className="w-3 h-3" />
-                                            <span>Kopyalandı</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Copy className="w-3 h-3" />
-                                            <span>Kopyala</span>
-                                        </>
-                                    )}
-                                </button>
-                            )}
-                        </div>
+                    {/* Progress Stats - Actions provided by MessageBubble text */}
+                    <div className="flex flex-col gap-3">
 
                         {/* Progress Bar */}
                         <div className="relative h-2 bg-(--color-border) rounded-full overflow-hidden">

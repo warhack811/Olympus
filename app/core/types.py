@@ -71,9 +71,6 @@ class SettingsLike(Protocol):
 
     # Groq API
     GROQ_API_KEY: str
-    GROQ_DECIDER_MODEL: str
-    GROQ_ANSWER_MODEL: str
-    GROQ_FAST_MODEL: str
 
     # Methods
     def get_cors_origins_list(self) -> list[str]: ...

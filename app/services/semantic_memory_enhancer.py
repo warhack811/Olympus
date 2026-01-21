@@ -24,9 +24,12 @@ Kullanım:
 import asyncio
 import logging
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 from dataclasses import dataclass
+
+from app.chat.decider import _get_llm_generator
+from app.core.llm.generator import LLMRequest
 
 logger = logging.getLogger("orchestrator.semantic_memory")
 
@@ -148,86 +151,161 @@ class Simhash:
 # SIMHASH STORE (In-memory cache for fast lookup)
 # =============================================================================
 
+# =============================================================================
+# REDIS SIMHASH STORE
+# =============================================================================
+
 class SimhashStore:
     """
     Simhash değerlerini tutar ve hızlı benzerlik araması yapar.
-    
-    Production'da Redis'e taşınabilir.
+    Redis-backed implementation.
     """
     
-    # {user_id: {memory_id: Simhash}}
-    _store: dict[int, dict[str, Simhash]] = {}
+    # Redis Keys
+    KEY_PREFIX = "simhash:"
     
     # Similarity threshold
-    SIMILARITY_THRESHOLD = 0.95  # Blueprint: similarity > 0.95 → merge
-    HAMMING_THRESHOLD = 3        # ~95% similarity için max 3 bit fark
+    SIMILARITY_THRESHOLD = 0.95
+    HAMMING_THRESHOLD = 3
     
     @classmethod
-    def add(cls, user_id: int, memory_id: str, text: str) -> Simhash:
-        """Simhash ekler."""
-        if user_id not in cls._store:
-            cls._store[user_id] = {}
+    async def add(cls, user_id: int, memory_id: str, text: str) -> Simhash:
+        """Redis'e Simhash ekler."""
+        from app.core.redis_client import get_redis
         
+        redis = await get_redis()
         sh = Simhash(text)
-        cls._store[user_id][memory_id] = sh
+        
+        if redis:
+            key = f"{cls.KEY_PREFIX}{user_id}"
+            # Store as hash: field=memory_id, value=simhash_int
+            await redis.hset(key, memory_id, str(sh.value))
+            # Set TTL (e.g. 30 days) to match importance decay roughly, or keep it consistent
+            # For now, let's keep it persistent like memory
+        else:
+            logger.warning("[SIMHASH] Redis unavailable, skipping save.")
+            
         return sh
     
     @classmethod
-    def find_similar(cls, user_id: int, text: str) -> SimhashResult:
-        """Benzer memory arar."""
+    async def find_similar(cls, user_id: int, text: str) -> SimhashResult:
+        """Redis'te benzer memory arar."""
+        from app.core.redis_client import get_redis
+        
         new_sh = Simhash(text)
+        redis = await get_redis()
         
-        if user_id not in cls._store:
+        if not redis:
+            logger.warning("[SIMHASH] Redis unavailable, skipping check.")
             return SimhashResult(is_duplicate=False)
-        
-        for memory_id, existing_sh in cls._store[user_id].items():
-            dist = new_sh.distance(existing_sh)
-            sim = new_sh.similarity(existing_sh)
             
-            if dist <= cls.HAMMING_THRESHOLD:
-                return SimhashResult(
-                    is_duplicate=True,
-                    existing_id=memory_id,
-                    hamming_distance=dist,
-                    similarity=sim
-                )
+        key = f"{cls.KEY_PREFIX}{user_id}"
+        
+        # Get all hashes for user
+        # Note: If user has 10k memories, this might be heavy. 
+        # But for active usage it's acceptable.
+        # Future optimization: Use LSH buckets or Vector DB
+        all_hashes = await redis.hgetall(key)
+        
+        if not all_hashes:
+            return SimhashResult(is_duplicate=False)
+            
+        for memory_id, val_str in all_hashes.items():
+            try:
+                existing_val = int(val_str)
+                # Create rudimentary Simhash obj
+                existing_sh = Simhash("")
+                existing_sh.value = existing_val
+                
+                dist = new_sh.distance(existing_sh)
+                sim = new_sh.similarity(existing_sh)
+                
+                if dist <= cls.HAMMING_THRESHOLD:
+                    return SimhashResult(
+                        is_duplicate=True,
+                        existing_id=memory_id,
+                        hamming_distance=dist,
+                        similarity=sim
+                    )
+            except ValueError:
+                continue
         
         return SimhashResult(is_duplicate=False, similarity=0.0)
     
     @classmethod
-    def remove(cls, user_id: int, memory_id: str) -> bool:
-        """Simhash siler."""
-        if user_id in cls._store and memory_id in cls._store[user_id]:
-            del cls._store[user_id][memory_id]
-            return True
-        return False
+    async def remove(cls, user_id: int, memory_id: str) -> bool:
+        """Redis'ten Simhash siler."""
+        from app.core.redis_client import get_redis
+        redis = await get_redis()
+        if not redis:
+            return False
+            
+        key = f"{cls.KEY_PREFIX}{user_id}"
+        result = await redis.hdel(key, memory_id)
+        return result > 0
     
     @classmethod
-    def clear_user(cls, user_id: int) -> int:
+    async def clear_user(cls, user_id: int) -> int:
         """Kullanıcının tüm simhash'lerini siler."""
-        if user_id in cls._store:
-            count = len(cls._store[user_id])
-            del cls._store[user_id]
-            return count
-        return 0
+        from app.core.redis_client import get_redis
+        redis = await get_redis()
+        if not redis:
+            return 0
+            
+        key = f"{cls.KEY_PREFIX}{user_id}"
+        count = await redis.hlen(key)
+        await redis.delete(key)
+        return count
 
 
 # =============================================================================
 # DOUBLE GRADER
 # =============================================================================
 
+SCOUT_GRADER_PROMPT = """
+You are a fast relevance filter (Scout).
+Rate the relevance of the MEMORY to the QUERY on a scale of 0.0 to 1.0.
+- 1.0: Extremely relevant / Direct answer
+- 0.5: Somewhat relevant / Related topic
+- 0.0: Irrelevant / Noise
+
+QUERY: {query}
+MEMORY: {memory}
+
+Rules:
+- Output ONLY the float number.
+- No explanation.
+"""
+
+QWEN_GRADER_PROMPT = """
+You are a semantic integrity judge (Qwen).
+Analyze the relevance of the MEMORY to the QUERY context.
+
+QUERY: {query}
+MEMORY: {memory}
+
+Assess:
+- Entity overlap (names, places)
+- Topic alignment
+- Temporal relevance
+
+Output ONLY a float score between 0.0 and 1.0.
+"""
+
 class DoubleGrader:
     """
-    Double Grader - Scout + Qwen Consensus.
+    Double Grader - Scout + Qwen Consensus (REAL LLM IMPLEMENTATION).
     
-    Blueprint v1: "Scout grader → Qwen grader → Consensus"
-    Her ikisi de > 0.7 ise kabul.
+    Blueprint v1: "Scout grader (Fast) → Qwen grader (Quality) → Consensus"
+    Her ikisi de threshold'u geçerse kabul.
     """
     
     # Thresholds
-    GRADE_THRESHOLD = 0.7      # Her model için minimum skor
-    SCOUT_TIMEOUT = 0.5        # 500ms
-    QWEN_TIMEOUT = 1.0         # 1s
+    GRADE_THRESHOLD = 0.6      # Hafif gevşek tutarak LLM'e alan bırakalım
+    
+    # Timeouts (Real/Networked)
+    SCOUT_TIMEOUT = 2.0        # Fast model response time
+    QWEN_TIMEOUT = 4.0         # Large model response time
     
     @classmethod
     async def grade_memory(
@@ -237,37 +315,29 @@ class DoubleGrader:
         memory_id: str
     ) -> GradeResult:
         """
-        Memory'yi query'ye göre puanlar.
-        
-        Args:
-            query: Kullanıcı sorgusu
-            memory_text: Memory içeriği
-            memory_id: Memory ID
-            
-        Returns:
-            GradeResult: Puanlama sonucu
+        Memory'yi query'ye göre puanlar (Gerçek LLM çağrıları ile).
         """
         try:
-            # Scout grading (fast model - simulated with heuristics for now)
+            # Scout grading (Fast/Instant Model)
             scout_score = await cls._scout_grade(query, memory_text)
             
-            # If Scout fails early, skip Qwen
-            if scout_score < 0.5:
+            # Fail-fast: Scout çok düşük verirse Qwen'i yorma (Cost optimization)
+            if scout_score < 0.4:
                 return GradeResult(
                     memory_id=memory_id,
                     scout_score=scout_score,
                     qwen_score=0.0,
-                    consensus_score=scout_score / 2,
+                    consensus_score=scout_score,
                     passed=False,
-                    reason="scout_failed_early"
+                    reason="scout_filtered"
                 )
             
-            # Qwen grading (quality model - simulated for now)
+            # Qwen grading (Quality/Versatile Model)
             qwen_score = await cls._qwen_grade(query, memory_text)
             
-            # Consensus
+            # Consensus: (Scout + Qwen) / 2
             consensus = (scout_score + qwen_score) / 2
-            passed = scout_score >= cls.GRADE_THRESHOLD and qwen_score >= cls.GRADE_THRESHOLD
+            passed = consensus >= cls.GRADE_THRESHOLD
             
             return GradeResult(
                 memory_id=memory_id,
@@ -275,85 +345,81 @@ class DoubleGrader:
                 qwen_score=qwen_score,
                 consensus_score=consensus,
                 passed=passed,
-                reason="consensus_passed" if passed else "consensus_failed"
+                reason="consensus_passed" if passed else "consensus_low"
             )
             
         except Exception as e:
             logger.error(f"[GRADER] Error grading memory {memory_id}: {e}")
+            # Fail-safe: Hata durumunda (örn. API gitti) 0.5 ile şansı sürdür
             return GradeResult(
                 memory_id=memory_id,
-                scout_score=0.5,  # Safe default
+                scout_score=0.5,
                 qwen_score=0.5,
                 consensus_score=0.5,
                 passed=False,
-                reason=f"error: {e}"
+                reason=f"error_fallback: {e}"
             )
     
     @classmethod
     async def _scout_grade(cls, query: str, memory_text: str) -> float:
         """
-        Scout grading (fast heuristic-based for now).
-        
-        Future: Replace with actual LLM call to fast model.
+        Scout Grade: Fast Model (role="fast").
         """
-        # Heuristic scoring based on keyword overlap and length
-        query_words = set(query.lower().split())
-        memory_words = set(memory_text.lower().split())
+        prompt = SCOUT_GRADER_PROMPT.format(query=query, memory=memory_text)
         
-        if not query_words or not memory_words:
-            return 0.5
-        
-        # Keyword overlap
-        overlap = len(query_words & memory_words)
-        max_possible = min(len(query_words), len(memory_words))
-        
-        if max_possible == 0:
-            return 0.5
-        
-        keyword_score = overlap / max_possible
-        
-        # Length penalty (too short = less info, too long = noise)
-        length = len(memory_text)
-        if length < 10:
-            length_score = 0.3
-        elif length > 500:
-            length_score = 0.7
-        else:
-            length_score = 0.9
-        
-        return min(1.0, (keyword_score * 0.7) + (length_score * 0.3))
-    
+        try:
+            generator = _get_llm_generator()
+            request = LLMRequest(
+                role="fast",  # Uses Llama-3-8b or similar fast model
+                prompt=prompt,
+                temperature=0.1 # Deterministic
+            )
+            
+            result = await generator.generate(request)
+            if result.ok:
+                try:
+                    score = float(result.text.strip())
+                    return max(0.0, min(1.0, score))
+                except ValueError:
+                    logger.warning(f"[SCOUT] Invalid float response: {result.text}")
+                    return 0.5 # Parsing error fallback
+            
+            return 0.0 # Generation failed
+            
+        except Exception as e:
+            logger.warning(f"[SCOUT] call failed: {e}")
+            return 0.0
+
     @classmethod
     async def _qwen_grade(cls, query: str, memory_text: str) -> float:
         """
-        Qwen grading (quality check).
-        
-        Future: Replace with actual LLM call to Qwen model.
+        Qwen Grade: Quality Model (role="answer" or "semantic").
         """
-        # For now, use slightly different heuristics
-        # This simulates the "second opinion" from Qwen
+        prompt = QWEN_GRADER_PROMPT.format(query=query, memory=memory_text)
         
-        query_lower = query.lower()
-        memory_lower = memory_text.lower()
-        
-        # Check for semantic relevance indicators
-        relevance_keywords = [
-            "isim", "ad", "name", "meslek", "job", "yaş", "age",
-            "şehir", "city", "proje", "project", "tercih", "preference"
-        ]
-        
-        keyword_hits = sum(1 for kw in relevance_keywords if kw in query_lower or kw in memory_lower)
-        keyword_score = min(1.0, keyword_hits / 3)  # Normalize
-        
-        # Content quality check
-        if len(memory_text) < 5:
-            quality_score = 0.2
-        elif any(c.isupper() for c in memory_text):  # Has proper nouns
-            quality_score = 0.9
-        else:
-            quality_score = 0.7
-        
-        return (keyword_score * 0.4) + (quality_score * 0.6)
+        try:
+            generator = _get_llm_generator()
+            request = LLMRequest(
+                role="answer",  # Uses Llama-3-70b/Qwen or similar quality model
+                prompt=prompt,
+                temperature=0.1
+            )
+            
+            result = await generator.generate(request)
+            if result.ok:
+                try:
+                    score = float(result.text.strip())
+                    return max(0.0, min(1.0, score))
+                except ValueError:
+                    logger.warning(f"[QWEN] Invalid float response: {result.text}")
+                    return 0.5
+            
+            return 0.0
+            
+        except Exception as e:
+            logger.warning(f"[QWEN] call failed: {e}")
+            return 0.0
+
 
 
 # =============================================================================
@@ -432,7 +498,7 @@ class SemanticMemoryEnhancer:
         Returns:
             Tuple[bool, SimhashResult]: (is_duplicate, result)
         """
-        result = SimhashStore.find_similar(user_id, text)
+        result = await SimhashStore.find_similar(user_id, text)
         return result.is_duplicate, result
     
     @classmethod
@@ -443,7 +509,8 @@ class SemanticMemoryEnhancer:
         text: str
     ) -> Simhash:
         """Memory için Simhash kaydeder."""
-        return SimhashStore.add(user_id, memory_id, text)
+        """Memory için Simhash kaydeder."""
+        return await SimhashStore.add(user_id, memory_id, text)
     
     @classmethod
     async def grade_memories(

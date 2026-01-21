@@ -24,9 +24,11 @@ import { useIsMobile } from '@/hooks'
 export function ChatArea() {
     const messages = useChatStore((state) => state.messages)
     const setMessages = useChatStore((state) => state.setMessages)
+    const addMessage = useChatStore((state) => state.addMessage)
     const currentConversationId = useChatStore((state) => state.currentConversationId)
     const isStreaming = useChatStore((state) => state.isStreaming)
     const isLoadingHistory = useChatStore((state) => state.isLoadingHistory)
+    const isInitialLoad = useChatStore((state) => state.isInitialLoad)
     const scrollRef = useRef<HTMLDivElement>(null)
     const isMobile = useIsMobile()
 
@@ -40,6 +42,42 @@ export function ChatArea() {
 
     // Image job tracking for floating badge - use new hook
     const activeJobCount = useActiveJobCount()
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Uygulama başlangıcında konuşma seçiliyse mesajları yeniden yükle
+    // ─────────────────────────────────────────────────────────────────────────
+    useEffect(() => {
+        // Uygulama başlangıcında, konuşma seçiliyse ama mesaj yoksa, yükle
+        if (currentConversationId && messages.length === 0 && !isLoadingHistory && !isInitialLoad) {
+            const hydrateMessages = async () => {
+                try {
+                    console.log('[ChatArea] Mesajlar yeniden yükleniyor:', currentConversationId)
+                    const freshMessages = await chatApi.getMessages(currentConversationId)
+                    setMessages(freshMessages)
+                } catch (error) {
+                    console.error('[ChatArea] Mesaj yeniden yükleme başarısız:', error)
+                    
+                    // Kullanıcıya hata mesajı göster
+                    const errorMsg = error instanceof Error 
+                        ? error.message 
+                        : 'Mesajlar yüklenirken bir hata oluştu'
+                    
+                    addMessage({
+                        role: 'assistant',
+                        content: `⚠️ Hata: ${errorMsg}. Lütfen sayfayı yenileyin.`
+                    })
+                    
+                    // 5 saniye sonra yeniden dene
+                    setTimeout(() => {
+                        console.log('[ChatArea] Yeniden deneniyor...')
+                        hydrateMessages()
+                    }, 5000)
+                }
+            }
+
+            hydrateMessages()
+        }
+    }, [currentConversationId, messages.length, isLoadingHistory, isInitialLoad, setMessages])
 
     // ─────────────────────────────────────────────────────────────────────────
     // Reload messages when image completes (backend updated the message)
@@ -127,10 +165,10 @@ export function ChatArea() {
         }
     }, [currentConversationId, scrollToBottom])
 
-    // Show welcome only when no conversation selected AND no messages
-    const showWelcome = !currentConversationId && messages.length === 0
-    // Show loading when loading history
-    const showLoading = isLoadingHistory && messages.length === 0
+    // Show welcome only when no conversation selected AND no messages AND not initial load
+    const showWelcome = !currentConversationId && messages.length === 0 && !isInitialLoad
+    // Show loading only during initial load OR conversation-specific loading
+    const showLoading = (isInitialLoad || isLoadingHistory) && messages.length === 0
 
     return (
         <div className="flex-1 flex flex-col overflow-hidden relative">

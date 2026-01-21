@@ -113,15 +113,18 @@ export function renderMarkdown(content: string): string {
     if (!content) return ''
 
     // 1. Protect Math Blocks
-    // We replace $$...$$ and $...$ with placeholders so marked doesn't mangle backslashes or underscores
-    // 1. Protect Math Blocks
-    // We replace $$...$$ and $...$ with placeholders so marked doesn't mangle backslashes or underscores
-    // Use a placeholder that marked won't touch (no underscores, no asterisks, no special chars)
+    // We replace math delimiters with placeholders so marked doesn't mangle content
     const mathBlocks: string[] = []
 
     // Protect display math $$ ... $$
     let protectedContent = content.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
-        mathBlocks.push(match) // Store including delimiters
+        mathBlocks.push(match)
+        return `MATHBLOCK${mathBlocks.length - 1}ENDMATHBLOCK`
+    })
+
+    // Protect block math \[ ... \] (or \\[ ... \\])
+    protectedContent = protectedContent.replace(/\\{1,2}\[([\s\S]*?)\\{1,2}\]/g, (match) => {
+        mathBlocks.push(match)
         return `MATHBLOCK${mathBlocks.length - 1}ENDMATHBLOCK`
     })
 
@@ -131,15 +134,27 @@ export function renderMarkdown(content: string): string {
         return `MATHBLOCK${mathBlocks.length - 1}ENDMATHBLOCK`
     })
 
+    // Protect inline math \( ... \) (or \\( ... \\))
+    protectedContent = protectedContent.replace(/\\{1,2}\(([\s\S]*?)\\{1,2}\)/g, (match) => {
+        mathBlocks.push(match)
+        return `MATHBLOCK${mathBlocks.length - 1}ENDMATHBLOCK`
+    })
+
     // 2. Parse Markdown
     let rawHtml = marked.parse(protectedContent) as string
 
     // 3. Restore Math Blocks
     mathBlocks.forEach((block, index) => {
-        // Restore the block. 
-        // regex global replace just in case marked duplicated it (unlikely)
         const placeholder = `MATHBLOCK${index}ENDMATHBLOCK`
-        rawHtml = rawHtml.replaceAll(placeholder, block)
+
+        // Normalize double backslashes which models sometimes send
+        // and which our regex might have preserved. 
+        // e.g. \\[ -> \[ 
+        let normalizedBlock = block
+        if (normalizedBlock.startsWith('\\\\[')) normalizedBlock = normalizedBlock.replace('\\\\[', '\\[').replace('\\\\]', '\\]')
+        if (normalizedBlock.startsWith('\\\\(')) normalizedBlock = normalizedBlock.replace('\\\\(', '\\(').replace('\\\\)', '\\)')
+
+        rawHtml = rawHtml.replaceAll(placeholder, normalizedBlock)
     })
 
     // 4. Sanitize but allow our custom classes

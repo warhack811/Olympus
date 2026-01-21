@@ -178,14 +178,8 @@ export const ImageCompletedCard = memo(function ImageCompletedCard({
                     </motion.div>
                 </div>
 
-                {/* Content */}
+                {/* Content - Actions only, prompt is handled by MessageBubble */}
                 <div className="p-4 space-y-3">
-                    {/* Prompt */}
-                    <p className="text-sm text-(--color-text) leading-relaxed">
-                        <Sparkles className="inline w-3.5 h-3.5 mr-1.5 text-(--color-primary)" />
-                        {displayPrompt}
-                    </p>
-
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2">
                         {/* Regenerate */}

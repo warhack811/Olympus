@@ -17,11 +17,11 @@ export function TypingIndicator({ className }: TypingIndicatorProps) {
 
     return (
         <div className={cn(
-            "flex items-center gap-4 px-4 md:px-8 py-4",
+            "flex items-center gap-2 md:gap-4 px-4 md:px-8 py-4",
             className
         )}>
             {/* Avatar - Slightly larger glow */}
-            <div className="w-9 h-9 rounded-xl bg-(--gradient-brand) flex items-center justify-center flex-shrink-0 shadow-lg shadow-(--color-primary)/10">
+            <div className="w-9 h-9 rounded-xl bg-(--gradient-brand) hidden md:flex items-center justify-center flex-shrink-0 shadow-lg shadow-(--color-primary)/10">
                 <span className="text-base">✨</span>
             </div>
 

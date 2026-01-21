@@ -46,10 +46,10 @@ export function WelcomeScreen() {
                 }}
             >
                 {/* Glow effect */}
-                <div className="absolute inset-0 bg-(--gradient-brand) rounded-3xl blur-2xl opacity-40 animate-pulse" />
+                <div className="absolute inset-0 rounded-3xl blur-2xl opacity-40 animate-pulse" style={{ background: 'var(--gradient-brand)' }} />
 
                 {/* Main logo */}
-                <div className="relative w-full h-full bg-(--gradient-brand) rounded-3xl flex items-center justify-center shadow-2xl ring-4 ring-(--color-bg) ring-offset-2 ring-offset-(--color-bg-surface)">
+                <div className="relative w-full h-full rounded-3xl flex items-center justify-center shadow-2xl" style={{ background: 'var(--gradient-brand)' }}>
                     <Sparkles className="h-12 w-12 text-white drop-shadow-lg" />
                 </div>
             </motion.div>
@@ -141,25 +141,21 @@ function QuickActionCard({ icon, title, description, onClick, gradient }: QuickA
             onClick={onClick}
             className={cn(
                 "group relative overflow-hidden rounded-2xl p-3 md:p-5 text-left",
-                "bg-(--color-bg-surface) border border-(--color-border)",
-                "hover:border-(--color-border-hover) transition-all duration-300"
+                "bg-(--color-bg-surface)/30 backdrop-blur-md border border-(--color-border)",
+                "hover:border-(--color-primary)/40 hover:bg-(--color-bg-surface)/50 transition-all duration-300"
             )}
         >
             {/* Gradient Glow on Hover */}
             <div
-                className={cn(
-                    "absolute inset-0 opacity-0 group-hover:opacity-10",
-                    `bg-linear-to-br ${gradient}`,
-                    "blur-xl transition-opacity duration-300"
-                )}
+                className="absolute inset-0 opacity-0 group-hover:opacity-5 transition-opacity duration-300"
+                style={{ background: 'var(--gradient-brand)' }}
             />
 
             <div className="relative">
-                <div className={cn(
-                    "w-8 h-8 md:w-12 md:h-12 rounded-xl flex items-center justify-center mb-2 md:mb-3",
-                    `bg-linear-to-br ${gradient}`,
-                    "text-white shadow-lg"
-                )}>
+                <div
+                    className="w-8 h-8 md:w-12 md:h-12 rounded-xl flex items-center justify-center mb-2 md:mb-3 text-white shadow-lg"
+                    style={{ background: 'var(--gradient-brand)' }}
+                >
                     {/* Clone icon to adjust size if needed, or rely on container centering */}
                     {/* Force icon scaling via CSS if needed, but usually wrapper constraints work if icon is substantial */}
                     <div className="scale-75 md:scale-100 origin-center flex items-center justify-center">

@@ -1,7 +1,7 @@
 /**
  * useConversations Hook
  * 
- * Loads and manages conversation history from API
+ * Konuşma geçmişini API'den yükler ve yönetir
  */
 
 import { useEffect, useCallback } from 'react'
@@ -12,31 +12,52 @@ import { useChatStore } from '@/stores'
 export function useConversations() {
     const setConversations = useChatStore((state) => state.setConversations)
     const setLoadingHistory = useChatStore((state) => state.setLoadingHistory)
+    const setInitialLoad = useChatStore((state) => state.setInitialLoad)
 
-    // Fetch conversations from API
+    // API'den konuşmaları yükle
     const { data, isLoading, error, refetch } = useQuery({
         queryKey: ['conversations'],
         queryFn: async () => {
             const conversations = await chatApi.getConversations()
             return conversations
         },
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        staleTime: 1000 * 60 * 5, // 5 dakika
     })
 
-    // Update store when data changes
+    // Veri değiştiğinde store'u güncelle
     useEffect(() => {
         if (data) {
             setConversations(data)
         }
     }, [data, setConversations])
 
-    // Track loading state
+    // Yükleme durumunu takip et
     useEffect(() => {
         setLoadingHistory(isLoading)
     }, [isLoading, setLoadingHistory])
 
-    // Manual refresh
+    // İlk yükleme tamamlandığında işaretle
+    useEffect(() => {
+        if (!isLoading && data) {
+            setInitialLoad(false)
+        }
+    }, [isLoading, data, setInitialLoad])
+
+    // Hata yönetimi: Hata oluşursa log yaz
+    useEffect(() => {
+        if (error) {
+            console.error('[useConversations] Konuşmalar yüklenirken hata:', error)
+        }
+    }, [error])
+
+    // Manuel yenileme
     const refreshConversations = useCallback(() => {
+        refetch()
+    }, [refetch])
+
+    // Yeniden deneme mekanizması
+    const retryLoad = useCallback(() => {
+        console.log('[useConversations] Yeniden deneniyor...')
         refetch()
     }, [refetch])
 
@@ -44,6 +65,7 @@ export function useConversations() {
         conversations: data || [],
         isLoading,
         error,
-        refresh: refreshConversations
+        refresh: refreshConversations,
+        retry: retryLoad  // Yeniden deneme metodu
     }
 }

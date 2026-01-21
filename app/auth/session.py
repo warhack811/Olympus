@@ -45,27 +45,13 @@ SESSION_DEFAULT_TTL_MINUTES = 60 * 24  # 24 saat
 """Varsayılan oturum süresi (dakika cinsinden)."""
 
 
-# =============================================================================
-# LAZY IMPORTS
-# =============================================================================
 
+from app.config import get_settings
+from app.core.database import get_session
+from app.auth.models import Session, User
+from app.auth.dependencies import SESSION_COOKIE_NAME
+from app.auth import remember as remember_mgr
 
-def _get_imports():
-    """Import döngüsünü önlemek için lazy import."""
-    try:
-        from app.auth import remember as remember_mgr
-        from app.auth.dependencies import SESSION_COOKIE_NAME
-        from app.auth.user_manager import get_user_by_id
-        from app.core.database import get_session
-        from app.core.models import Session, User
-    except ImportError:
-        from app.auth.dependencies import SESSION_COOKIE_NAME
-        from app.auth.user_manager import get_user_by_id
-        from app.core.database import get_session
-        from app.core.models import Session, User
-        from auth import remember as remember_mgr
-
-    return get_session, Session, User, get_user_by_id, SESSION_COOKIE_NAME, remember_mgr
 
 
 # =============================================================================
@@ -76,7 +62,7 @@ def _get_imports():
 def create_session(
     user,
     user_agent: str | None = None,
-    _ip_address: str | None = None,
+    ip_address: str | None = None,
 ):
     """
     Yeni oturum oluşturur.
@@ -84,7 +70,7 @@ def create_session(
     Args:
         user: Kullanıcı nesnesi (User model)
         user_agent: Tarayıcı bilgisi (opsiyonel)
-        _ip_address: IP adresi (opsiyonel, gelecekte kullanılabilir - şu an kullanılmıyor)
+        ip_address: IP adresi (opsiyonel, gelecekte kullanılabilir - şu an kullanılmıyor)
 
     Returns:
         Session: Oluşturulan oturum kaydı
@@ -96,7 +82,14 @@ def create_session(
         >>> session = create_session(user, user_agent=request.headers.get("user-agent"))
         >>> response.set_cookie("session_token", session.id)
     """
-    get_session, Session, _, _, _, _ = _get_imports()
+
+    # Lazy import only for user_manager to avoid potential circular dependency if it imports session
+    # But since models are split, this should be safer, but let's keep it minimal.
+    # Actually, we can try importing it at top level if user_manager doesn't import session.
+    # Check shows user_manager imports: logging, typing, passlib, sqlmodel. No session import.
+    # But let's check if it imports models that import session.
+    from app.auth.user_manager import get_user_by_id
+
 
     token = secrets.token_urlsafe(32)  # 256-bit güvenli token
     now = datetime.utcnow()
@@ -137,7 +130,7 @@ def get_session_by_token(token: str):
     if not token:
         return None
 
-    get_session, Session, _, _, _, _ = _get_imports()
+
     now = datetime.utcnow()
 
     with get_session() as db:
@@ -161,7 +154,7 @@ def invalidate_session(token: str) -> bool:
     if not token:
         return False
 
-    get_session, Session, _, _, _, _ = _get_imports()
+
 
     with get_session() as db:
         session_obj = db.get(Session, token)
@@ -194,7 +187,7 @@ def touch_session(token: str) -> bool:
     if not token:
         return False
 
-    get_session, Session, _, _, _, _ = _get_imports()
+
     now = datetime.utcnow()
 
     with get_session() as db:
@@ -233,7 +226,7 @@ def get_user_from_session_token(token: str):
     Note:
         Banlı kullanıcıların oturumları otomatik sonlandırılır.
     """
-    _, _, _, get_user_by_id, _, _ = _get_imports()
+    from app.auth.user_manager import get_user_by_id
 
     session_obj = get_session_by_token(token)
     if not session_obj:
@@ -264,7 +257,7 @@ def cleanup_expired_sessions(_max_age_minutes: int = 1440) -> int:
     Returns:
         int: Temizlenen oturum sayısı
     """
-    get_session, Session, _, _, _, _ = _get_imports()
+
     now = datetime.utcnow()
     removed = 0
 
@@ -301,7 +294,7 @@ def get_username_from_request(request: Request) -> str | None:
     Returns:
         str veya None: Kullanıcı adı
     """
-    get_session, Session, User, _, SESSION_COOKIE_NAME, remember_mgr = _get_imports()
+
 
     # 1) Normal session cookie
     sid = request.cookies.get(SESSION_COOKIE_NAME)
@@ -327,4 +320,5 @@ def get_username_from_request(request: Request) -> str | None:
         return username
 
     return None
+
 

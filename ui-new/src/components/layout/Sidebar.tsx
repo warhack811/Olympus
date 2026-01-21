@@ -7,6 +7,7 @@
 
 import { motion } from 'framer-motion'
 import { Plus, MessageSquare, Trash2, Loader2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useChatStore } from '@/stores'
 import { useConversations } from '@/hooks'
 import { UserProfile } from './UserProfile'
@@ -62,6 +63,13 @@ export function Sidebar({
     const handleSelectConversation = async (id: string) => {
         const store = useChatStore.getState()
 
+        // FIX 3: Guard against concurrent operations
+        // Don't allow selection if already loading to prevent race conditions
+        if (store.isLoadingHistory) {
+            console.warn('[Sidebar] Already loading, ignoring selection')
+            return
+        }
+
         // Set loading state and conversation ID 
         store.setLoadingHistory(true)
         setCurrentConversation(id)
@@ -109,6 +117,8 @@ export function Sidebar({
         }
     }
 
+    const queryClient = useQueryClient()
+
     const handleDeleteConversation = async (id: string) => {
         try {
             // First delete from backend
@@ -117,6 +127,9 @@ export function Sidebar({
 
             // Then update local state
             deleteConversation(id)
+
+            // CRITICAL: Invalidate react-query cache to prevent sate sync issues when navigating
+            queryClient.invalidateQueries({ queryKey: ['conversations'] })
 
             console.log('[Sidebar] Conversation deleted:', id)
         } catch (error) {
@@ -144,7 +157,7 @@ export function Sidebar({
                 </Button>
             </div>
             {/* Conversations List */}
-            <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
+            <div className="flex-1 overflow-y-auto py-2 scrollbar-hide">
                 {isLoadingConversations ? (
                     <div className="flex items-center justify-center py-12">
                         <Loader2 className="h-6 w-6 animate-spin text-(--color-text-muted)" />
@@ -211,7 +224,6 @@ interface ConversationItemProps {
 function ConversationItem({ conversation, isActive, onClick, onDelete }: ConversationItemProps) {
     return (
         <motion.div
-            layout
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
             className="group relative"

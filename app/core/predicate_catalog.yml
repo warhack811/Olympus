@@ -1,0 +1,223 @@
+ISIM:
+  canonical: ISIM
+  aliases: ["ISIM", "ADIM", "AD", "NAME", "\u0130S\u0130M"]
+  category: identity
+  type: EXCLUSIVE
+  durability: STATIC
+  enabled: true
+
+YASI:
+  canonical: YASI
+  aliases: ["YASI", "YAS", "AGE", "YA\u015eI", "YA\u015e"]
+  category: identity
+  type: EXCLUSIVE
+  durability: STATIC
+  enabled: true
+
+MESLEGI:
+  canonical: MESLEGI
+  aliases: ["MESLEGI", "MESLEK", "JOB", "OCCUPATION", "MESLE\u011eI"]
+  category: identity
+  type: EXCLUSIVE
+  durability: LONG_TERM
+  enabled: true
+
+YASAR_YER:
+  canonical: YASAR_YER
+  aliases: ["YASAR_YER", "YASADIGI_YER", "IKAMET", "RESIDENCE", "YA\u015eAR_YER", "YA\u015eADIGI_YER"]
+  category: location
+  type: EXCLUSIVE
+  durability: LONG_TERM
+  enabled: true
+
+GELDIGI_YER:
+  canonical: GELDIGI_YER
+  aliases: ["GELDIGI_YER", "MEMLEKET", "FROM", "GELD\u0130\u011e\u0130_YER"]
+  category: identity
+  type: EXCLUSIVE
+  durability: LONG_TERM
+  enabled: true
+
+LAKABI:
+  canonical: LAKABI
+  aliases: ["LAKAP", "NICKNAME"]
+  category: identity
+  type: EXCLUSIVE
+  durability: LONG_TERM
+  enabled: true
+
+DOGUM_TARIHI:
+  canonical: DOGUM_TARIHI
+  aliases: ["DOGUM_TARIHI", "DOGUM_TARIH", "BIRTH_DATE", "DOB", "DO\u011eUM_TAR\u0130H\u0130"]
+  category: identity
+  type: EXCLUSIVE
+  durability: STATIC
+  enabled: true
+
+ALERJISI:
+  canonical: ALERJISI
+  aliases: ["ALERJI", "ALERJISI", "ALLERGY", "HAS_ALLERGY", "ALERJ\u0130S\u0130", "ALERJ\u0130"]
+  category: identity
+  type: ADDITIVE
+  durability: STATIC
+  enabled: true
+
+SAGLIK_DURUMU:
+  canonical: SAGLIK_DURUMU
+  aliases: ["SAGLIK", "SAGLIK_DURUMU", "HEALTH", "MEDICAL", "SA\u011eLIK_DURUMU"]
+  category: identity
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+ESI:
+  canonical: ESI
+  aliases: ["ESI", "SPOUSE", "E\u015e\u0130"]
+  category: relationship
+  type: EXCLUSIVE
+  durability: LONG_TERM
+  enabled: true
+
+ARKADASI:
+  canonical: ARKADASI
+  aliases: ["ARKADASI", "ARKADAS", "FRIEND", "ARKADA\u015eI"]
+  category: relationship
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+AILE_UYESI:
+  canonical: AILE_UYESI
+  aliases: ["AILE_UYESI", "FAMILY_MEMBER", "A\u0130LE_\u00dcYES\u0130"]
+  category: relationship
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+COCUGU:
+  canonical: COCUGU
+  aliases: ["COCUGU", "CHILD", "\u00c7OCU\u011eU"]
+  category: relationship
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+SEVER:
+  canonical: SEVER
+  aliases: ["LIKES", "SEVDIGI"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+SEVMIYOR:
+  canonical: SEVMIYOR
+  aliases: ["SEVMIYOR", "SEVMEZ", "DISLIKES", "SEVM\u0130YOR"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+FAVORISI:
+  canonical: FAVORISI
+  aliases: ["FAVORISI", "FAVORI", "FAVORITE", "FAVOR\u0130S\u0130"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+HOBISI:
+  canonical: HOBISI
+  aliases: ["HOBISI", "HOBI", "HOBBIES", "HOB\u0130S\u0130"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+ILGILENIR:
+  canonical: ILGILENIR
+  aliases: ["ILGILENIR", "ILGI_ALANI", "INTERESTED_IN"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+NEFRET_EDER:
+  canonical: NEFRET_EDER
+  aliases: ["NEFRET", "HATES"]
+  category: preference
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+ISTIYOR:
+  canonical: ISTIYOR
+  aliases: ["ISTIYOR", "ISTEK", "WANTS", "\u0130ST\u0130YOR"]
+  category: goal
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+OGRENMEK_ISTIYOR:
+  canonical: OGRENMEK_ISTIYOR
+  aliases: ["OGRENMEK_ISTIYOR", "OGRENMEK ISTIYOR", "LEARN", "\u00d6\u011eRENMEK_\u0130ST\u0130YOR"]
+  category: goal
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+PLANLIYOR:
+  canonical: PLANLIYOR
+  aliases: ["PLANLIYOR", "PLAN", "PLANS"]
+  category: goal
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+VISITED:
+  canonical: VISITED
+  aliases: ["VISITED"]
+  category: experience
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+EXPERIENCED:
+  canonical: EXPERIENCED
+  aliases: ["EXPERIENCED"]
+  category: experience
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+PLANNED:
+  canonical: PLANNED
+  aliases: ["PLANNED"]
+  category: experience
+  type: ADDITIVE
+  durability: LONG_TERM
+  enabled: true
+
+NEREDE:
+  canonical: NEREDE
+  aliases: ["NEREDE", "KONUM", "WHERE_IS"]
+  category: state
+  type: ADDITIVE
+  durability: EPHEMERAL
+  enabled: true
+
+HISSEDIYOR:
+  canonical: HISSEDIYOR
+  aliases: ["HISSEDIYOR", "FEELS", "H\u0130SSED\u0130YOR"]
+  category: state
+  type: ADDITIVE
+  durability: EPHEMERAL
+  enabled: true
+
+YAPIYOR:
+  canonical: YAPIYOR
+  aliases: ["YAPIYOR", "DOING"]
+  category: state
+  type: ADDITIVE
+  durability: EPHEMERAL
+  enabled: true

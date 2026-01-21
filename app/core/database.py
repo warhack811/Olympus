@@ -251,28 +251,19 @@ def init_database_with_defaults() -> None:
     migration_success = False
     try:
         import os
-
         from alembic.config import Config
-
         from alembic import command
-
         # alembic.ini var mı kontrol et
         alembic_ini = "alembic.ini"
         if os.path.exists(alembic_ini):
             logger.info("[DB] Alembic migration'ları kontrol ediliyor...")
-
             alembic_cfg = Config(alembic_ini)
-
             # Migration'ları otomatik uygula
             command.upgrade(alembic_cfg, "head")
             logger.info("[DB] ✓ Alembic migrations başarıyla uygulandı")
             migration_success = True
         else:
             logger.warning("[DB] alembic.ini bulunamadı, create_all fallback kullanılacak")
-
-    except ImportError:
-        # Alembic not installed - normal in some setups
-        logger.debug("[DB] Alembic not available, using create_all")
     except Exception as e:
         logger.debug(f"[DB] Alembic migration skipped: {e}")
 

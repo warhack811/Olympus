@@ -49,7 +49,7 @@ def get_image_queue_stats() -> dict[str, Any]:
     return dict(_image_stats)
 
 
-def request_image_generation(
+async def request_image_generation(
     username: str,
     prompt: str,
     message_id: int,  # Güncellenecek mesaj ID'si
@@ -75,9 +75,10 @@ def request_image_generation(
         user: User nesnesi (routing icin)
         image_settings: Custom image settings
     """
-    print(
-        f"[DEBUG_PRINT] request_image_generation CALLED: {username}, prompt={prompt[:30]}..., settings={image_settings}"
-    )
+    from app.config import get_settings
+    settings = get_settings()
+    if settings.DEBUG:
+        logger.debug(f"[IMAGE] request_image_generation CALLED: {username}, prompt_length={len(prompt)}, settings={image_settings}")
 
     from html import escape as html_escape
 
@@ -159,23 +160,14 @@ def request_image_generation(
     queue_pos = job_queue.add_job(job)
     register_pending_job(job.job_id, username, conversation_id, queue_pos)
 
-    # İlk durumu mesaja yaz - [IMAGE_PENDING] marker ZORUNLU (frontend buna bakıyor)
-    queue_pos * 30
-    update_message(
-        message_id,
-        "[IMAGE_PENDING] Görsel isteğiniz kuyruğa alındı...",
-        {
-            "status": "queued",
-            "type": "image",
-            "job_id": job.job_id,
-            "queue_pos": queue_pos,
-            "prompt": prompt[:200],  # Frontend'in göstermesi için
-        },
-    )
+    # FIX #2: Double message update KALDIRILDI
+    # Mesaj zaten processor.py'de oluşturulmuş, burada tekrar güncellemeye gerek yok
 
-    # WebSocket ile progress gönder
-    asyncio.create_task(
-        send_progress(
+    # FIX #1: WebSocket exception handling ile direkt await
+    # Eski: asyncio.create_task() - sessizce fail oluyordu
+    # Yeni: try-except ile hata yönetimi
+    try:
+        await send_progress(
             username,
             conversation_id,
             0,
@@ -183,7 +175,10 @@ def request_image_generation(
             job_id=job.job_id,
             message_id=message_id,
         )
-    )
+        logger.debug(f"[IMAGE_MANAGER] WebSocket progress event gönderildi: {job.job_id}")
+    except Exception as e:
+        logger.error(f"[IMAGE_MANAGER] WebSocket event hatası: {e}")
+        # Devam et - bu kritik bir hata değil
 
     return job.job_id
 

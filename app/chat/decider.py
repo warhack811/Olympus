@@ -26,8 +26,6 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-import httpx
-
 # Modül logger'ı
 logger = logging.getLogger(__name__)
 
@@ -61,8 +59,24 @@ DEFAULT_GROQ_TIMEOUT = 15.0
 def _get_settings():
     """Ayarları lazy import ile yükler."""
     from app.config import get_settings
-
     return get_settings()
+
+
+# =============================================================================
+# LLM GENERATOR BRIDGE (Atlas Governance)
+# =============================================================================
+_GENERATOR = None
+
+
+def _get_llm_generator():
+    """Governance + KeyManager + Budget ile Groq adapter'ı döndürür."""
+    global _GENERATOR
+    if _GENERATOR is None:
+        from app.core.llm import LLMGenerator
+        from app.core.llm.adapters import groq_adapter
+
+        _GENERATOR = LLMGenerator(providers={"groq": groq_adapter})
+    return _GENERATOR
 
 
 def get_available_keys() -> list[str]:
@@ -100,125 +114,21 @@ async def call_groq_api_async(
     timeout: float = DEFAULT_GROQ_TIMEOUT,
 ) -> str | None:
     """
-    Groq Chat API çağrısı (async, anahtar rotasyonlu).
-
-    KeyManager ile en uygun anahtarı seçer ve 429 durumunda rotasyon yapar.
-
-    Args:
-        messages: OpenAI formatında mesaj listesi
-        model: Kullanılacak model
-        json_mode: JSON çıktı modu
-        temperature: Yaratıcılık seviyesi (0.0-1.0)
-        timeout: İstek zaman aşımı
-
-    Returns:
-        str veya None: API yanıtı veya hata durumunda None
+    Groq Chat API çağrısı (async) - yeni LLMGenerator üzerinden governance/key rotasyonu.
     """
-    # Lazy import to avoid circular defaults if any
-    from app.services.api_monitor import api_monitor
-    from app.core.key_manager import key_manager
-    
-    settings = _get_settings()
-    model = model or settings.GROQ_DECIDER_MODEL
+    generator = _get_llm_generator()
+    from app.core.llm.generator import LLMRequest
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        # --- KALİTE OPTİMİZASYONU ---
-        "top_p": 0.9,  
-        "frequency_penalty": 0.3,  
-        "presence_penalty": 0.1,  
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-
-    # Rotasyon limiti (Kaç farklı anahtar denenecek?)
-    # 5 makul bir sayı, sonsuz döngüye girmemesi için.
-    MAX_KEY_ATTEMPTS = 5
-    
-    for attempt in range(MAX_KEY_ATTEMPTS):
-        # 1. Anahtar Seçimi
-        api_key = key_manager.get_next_key(model=model)
-        if not api_key:
-            LiveTracer.warning("GROQ", "No API Keys available!")
-            logger.error("[GROQ] Kullanılabilir API anahtarı kalmadı (Hepsi cooldown veya limit dışı)!")
-            return None
-
-        headers = {"Authorization": f"Bearer {api_key}"}
-        
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
-
-                # --- API MONITORING ---
-                try:
-                    # Header update (Rate limits)
-                    api_monitor.update_usage(api_key, resp.headers)
-                except Exception:
-                    pass
-                # ----------------------
-
-                resp.raise_for_status()
-                
-                # Başarılı Yanıt
-                data = resp.json()
-                content = data.get("choices", [{}])[0].get("message", {}).get("content")
-                
-                if content:
-                    # Usage Tracking
-                    try:
-                        usage = data.get("usage", {})
-                        total_tokens = usage.get("total_tokens", 0)
-                        api_monitor.increment_usage(api_key, model, total_tokens)
-                    except Exception:
-                        pass
-
-                    # KeyManager'a başarı bildir
-                    key_manager.report_success(api_key, model=model)
-                    
-                    # Eğer ilk deneme değilse logla
-                    if attempt > 0:
-                        logger.info(f"[GROQ] Başarılı (Deneme {attempt + 1})")
-                        
-                    return content
-                else:
-                    # Boş içerik hatası?
-                    logger.warning(f"[GROQ] Boş içerik döndü. Key: ...{api_key[-4:]}")
-                    continue
-
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            
-            # KeyManager'a hata bildir (429 ise cooldown başlatır)
-            key_manager.report_failure(api_key, status, model=model)
-            
-            if status == 429:
-                LiveTracer.warning("GROQ", f"Rate Limit 429 ({model})")
-                logger.warning(f"[GROQ] Rate Limit 429. Rotasyon deneniyor... ({attempt+1}/{MAX_KEY_ATTEMPTS})")
-                continue # Sonraki anahtarı dene
-                
-            # Diğer hatalar (400, 401, 500)
-            try:
-                error_detail = exc.response.json()
-                logger.error(f"[GROQ] HTTP {status} Error: {error_detail}")
-            except:
-                logger.error(f"[GROQ] HTTP {status} Error: {exc.response.text[:200]}")
-                
-            if status >= 500:
-                # 5xx hatalarında da rotasyon dene
-                continue
-            else:
-                # 400 gibi hatalarda rotasyon yapma, request hatalı
-                return None
-
-        except Exception as exc:
-            LiveTracer.warning("GROQ", f"Exception: {exc}")
-            logger.error(f"[GROQ] Beklenmeyen hata: {exc}")
-            # Bağlantı hatası vs olabilir, rotasyon dene
-            continue
-
-    logger.critical("[GROQ] TÜM DENEMELER BAŞARISIZ OLDU!")
+    request = LLMRequest(
+        role="decider",
+        messages=messages,
+        temperature=temperature,
+        metadata={"override_model": model} if model else None,
+    )
+    result = await generator.generate(request)
+    if result.ok:
+        return result.text
+    LiveTracer.warning("GROQ", f"Decider failed: {result.text}")
     return None
 
 
@@ -233,15 +143,22 @@ async def call_groq_api_safe_async(
     """
     Retry mekanizmalı ve Fallback zincirli güvenli Groq API çağrısı.
     
-    1. İstenen model (veya default) denenir (KeyManager rotasyonu ile).
+    1. İstenen model (veya governance default) denenir (KeyManager rotasyonu ile).
     2. Başarısız olursa, FALLBACK_CHAINS yapılandırmasındaki alternatifler denenir.
     
     Args:
         messages: Mesaj listesi
-        model: Model adı
+        model: Model adı (opsiyonel, governance'dan alınır)
     """
     settings = _get_settings()
-    primary_model = model or settings.GROQ_DECIDER_MODEL
+    
+    # Model belirtilmemişse governance'dan al
+    if not model:
+        from app.core.llm.governance import governance
+        chain = governance.get_model_chain("synthesizer")
+        primary_model = chain[0] if chain else "llama-3.3-70b-versatile"
+    else:
+        primary_model = model
     
     # 1. Denenecek Modelleri Belirle
     attempt_models = [primary_model]
@@ -288,116 +205,19 @@ async def call_groq_api_stream_async(
     timeout: float = DEFAULT_GROQ_TIMEOUT,
 ) -> AsyncGenerator[str, None]:
     """
-    Streaming Groq API çağrısı.
-    KeyManager entegreli.
-
-    Args:
-        messages: Mesaj listesi
-        model: Model adı
-        temperature: Sıcaklık
-        timeout: Zaman aşımı
-
-    Yields:
-        str: Yanıt parçaları
+    Streaming Groq API çağrısı (LLMGenerator üzerinden).
     """
-    from app.services.api_monitor import api_monitor
-    from app.core.key_manager import key_manager
-    
-    settings = _get_settings()
-    model = model or settings.GROQ_DECIDER_MODEL
+    generator = _get_llm_generator()
+    from app.core.llm.generator import LLMRequest
 
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "stream": True,
-        # --- KALİTE OPTİMİZASYONU ---
-        "top_p": 0.9, 
-        "frequency_penalty": 0.3,  
-        "presence_penalty": 0.1, 
-    }
-    
-    # Maksimum deneme sayısı
-    MAX_KEY_ATTEMPTS = 5
-    
-    success = False
-    
-    for attempt in range(MAX_KEY_ATTEMPTS):
-        api_key = key_manager.get_next_key(model=model)
-        if not api_key:
-             logger.error("[GROQ_STREAM] Kullanılabilir API anahtarı kalmadı!")
-             yield "[ERROR] No API keys available."
-             return
-
-        headers = {"Authorization": f"Bearer {api_key}"}
-        
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("POST", GROQ_API_URL, headers=headers, json=payload) as resp:
-                    # --- API MONITORING ---
-                    try:
-                        api_monitor.update_usage(api_key, resp.headers)
-                    except Exception:
-                        pass
-                    # ----------------------
-
-                    if resp.status_code == 429:
-                        logger.warning(f"[GROQ_STREAM] Rate Limit 429 ({model}). Rotasyon...")
-                        key_manager.report_failure(api_key, 429, model=model)
-                        continue
-
-                    if resp.status_code >= 400:
-                        try:
-                            error_body = await resp.aread()
-                            error_text = error_body.decode("utf-8", errors="replace")
-                        except Exception as e:
-                            error_text = f"Error reading body: {e}"
-
-                        logger.error(f"[GROQ_STREAM] HTTP {resp.status_code}: {error_text}")
-                        key_manager.report_failure(api_key, resp.status_code, model=model)
-                        
-                        if resp.status_code >= 500:
-                            continue # Retry on server error
-                        else:
-                            yield f"[ERROR] HTTP {resp.status_code}"
-                            return
-
-                    # Başarılı bağlantı
-                    key_manager.report_success(api_key, model=model)
-                    success = True
-                    logger.info(f"[GROQ_STREAM] Başarılı akış başladı. Key: ...{api_key[-4:]}")
-
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-
-                        if line.startswith("data: "):
-                            data_str = line[6:]  # len("data: ") = 6
-                            if data_str == "[DONE]":
-                                return
-
-                            try:
-                                data = json.loads(data_str)
-                                delta = data.get("choices", [{}])[0].get("delta", {})
-                                content = delta.get("content")
-                                if content:
-                                    yield content
-                            except json.JSONDecodeError as e:
-                                logger.warning(
-                                    f"[GROQ_STREAM] JSON parse error: {e}"
-                                )
-                                continue
-                    return # Başarılı bitiş
-
-        except httpx.HTTPStatusError:
-             continue
-        except Exception as exc:
-            logger.error(f"[GROQ_STREAM] Beklenmeyen hata: {exc}")
-            continue
-
-    if not success:
-        logger.critical("[GROQ_STREAM] TÜM DENEMELER BAŞARISIZ OLDU!")
-        yield " [ERROR] Tüm API anahtarları tükendi veya hata oluştu. "
+    request = LLMRequest(
+        role="decider",
+        messages=messages,
+        temperature=temperature,
+        metadata={"override_model": model} if model else None,
+    )
+    async for chunk in generator.generate_stream(request):
+        yield chunk
 
 
 # =============================================================================

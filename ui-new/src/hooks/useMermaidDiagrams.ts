@@ -20,12 +20,13 @@ let isInitialized = false
 export function useMermaidDiagrams(
     containerRef: React.RefObject<HTMLElement | null>,
     content: string,
+    isStreaming: boolean,
     onOpenLightbox: (imageUrl: string) => void,
     onOpenMermaidViewer?: (svg: SVGSVGElement, code: string) => void
 ) {
     useEffect(() => {
         const container = containerRef.current
-        if (!container) return
+        if (!container || isStreaming) return
 
         const processMermaid = async () => {
             // Find all potential mermaid blocks
@@ -122,5 +123,5 @@ export function useMermaidDiagrams(
         // Small delay to ensure DOM is ready after React render
         const timeoutId = setTimeout(processMermaid, 50)
         return () => clearTimeout(timeoutId)
-    }, [containerRef, onOpenLightbox, content])
+    }, [containerRef, onOpenLightbox, content, isStreaming])
 }
